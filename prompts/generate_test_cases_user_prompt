@@ -1,0 +1,12 @@
+请为以下测试点编写详细的测试用例：
+
+功能点：{feature_name}
+测试点名称：{test_point_name}
+测试点描述：{test_point_description}
+测试类型：{test_point_type}
+优先级：{test_point_priority}
+前置条件：{test_point_precondition}
+预期结果：{test_point_expected_result}
+
+原始PRD文档（供参考）：
+{prd_text}

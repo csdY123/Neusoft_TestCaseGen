@@ -1,0 +1,47 @@
+[
+  {
+    "type": "features",
+    "document_id": "247f10fd1d8c484186e21594a478d0fc",
+    "item_id": "all_features",
+    "item_name": "7 features",
+    "score": 2,
+    "comment": "",
+    "timestamp": "2025-12-03T11:19:25.741730"
+  },
+  {
+    "type": "test_points",
+    "document_id": "247f10fd1d8c484186e21594a478d0fc",
+    "item_id": "feature_1_test_points",
+    "item_name": "1. 离线地图下载功能",
+    "score": 3,
+    "comment": "",
+    "timestamp": "2025-12-03T11:20:04.169067"
+  },
+  {
+    "type": "test_cases",
+    "document_id": "247f10fd1d8c484186e21594a478d0fc",
+    "item_id": "1. 离线地图下载功能_14. 兼容性测试（不同USB设备）",
+    "item_name": "1. 离线地图下载功能 > 14. 兼容性测试（不同USB设备）",
+    "score": 3,
+    "comment": "",
+    "timestamp": "2025-12-03T11:20:37.732112"
+  },
+  {
+    "type": "test_cases",
+    "document_id": "247f10fd1d8c484186e21594a478d0fc",
+    "item_id": "1. 离线地图下载功能_14. 兼容性测试（不同USB设备）",
+    "item_name": "1. 离线地图下载功能 > 14. 兼容性测试（不同USB设备）",
+    "score": 3,
+    "comment": "",
+    "timestamp": "2025-12-03T11:20:38.791996"
+  },
+  {
+    "type": "features",
+    "document_id": "247f10fd1d8c484186e21594a478d0fc",
+    "item_id": "all_features",
+    "item_name": "11 features",
+    "score": 3,
+    "comment": "",
+    "timestamp": "2025-12-03T11:24:52.772939"
+  }
+]
