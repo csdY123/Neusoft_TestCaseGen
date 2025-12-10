@@ -1,0 +1,4 @@
+*.json
+*.faiss
+*.pkl
+*.pyc

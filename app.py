@@ -21,6 +21,11 @@ from export_util import (
     format_data_for_visualization, format_data_for_labeling, load_export_file
 )
 from rating_util import save_rating, get_ratings, get_rating_summary, export_ratings_csv
+from rag_util import (
+    retrieve_knowledge, format_retrieved_content, check_index_exists,
+    build_index_from_docx, build_index_from_docx_with_mode, get_index_stats,
+    chunk_docx_with_llm
+)
 
 # Model configuration
 MODEL_CONFIG = {
@@ -223,34 +228,197 @@ def init_gradio_page():
                         value=initial_value,
                         interactive=True
                     )
-                with gr.Column(scale=2):
-                    doc_preview = gr.Textbox(
-                        label="Document Content",
-                        value=initial_preview,
-                        lines=30,
-                        max_lines=1000,
+                    
+                    # RAG Index Building Section
+                    gr.Markdown("### 🔧 RAG Index")
+                    index_stats = get_index_stats()
+                    if index_stats['exists']:
+                        count_str = str(index_stats['num_documents']) if index_stats['num_documents'] >= 0 else "?"
+                        init_status = f"✅ Index exists ({count_str} chunks)"
+                    else:
+                        init_status = "❌ No index"
+                    index_status = gr.Textbox(
+                        label="Index Status",
+                        value=init_status,
                         interactive=False,
-                        show_copy_button=True
+                        lines=1
                     )
+                    
+                    # Chunking mode selection
+                    chunk_mode = gr.Radio(
+                        label="Chunking Mode",
+                        choices=["⚡ Fast (Rule-based)", "🤖 LLM (Semantic)"],
+                        value="⚡ Fast (Rule-based)"
+                    )
+                    
+                    with gr.Row():
+                        preview_chunks_btn = gr.Button("👁️ Preview Chunks", variant="secondary")
+                        build_index_btn = gr.Button("🔨 Build Index", variant="primary")
+                    
+                    index_progress = gr.Textbox(
+                        label="Progress",
+                        value="",
+                        interactive=False,
+                        lines=2
+                    )
+                    
+                with gr.Column(scale=2):
+                    with gr.Tabs():
+                        with gr.Tab("📄 Document Content"):
+                            doc_preview = gr.Textbox(
+                                label="Document Content",
+                                value=initial_preview,
+                                lines=25,
+                                max_lines=1000,
+                                interactive=False,
+                                show_copy_button=True
+                            )
+                        with gr.Tab("🧩 Chunk Preview"):
+                            chunk_preview_info = gr.Markdown("Click **Preview Chunks** to see chunking results")
+                            chunk_preview = gr.Dataframe(
+                                headers=["#", "Size", "Preview"],
+                                datatype=["number", "number", "str"],
+                                row_count=10,
+                                col_count=(3, "fixed"),
+                                interactive=False,
+                                wrap=True
+                            )
+            
+            # Chunk preview handler
+            def preview_chunks_handler(doc_choice, mode):
+                if not doc_choice:
+                    return "⚠️ Please select a document first", []
+                
+                doc_id, doc_info = get_document_by_display_name(doc_choice)
+                if not doc_info:
+                    return "❌ Document not found", []
+                
+                docx_path = doc_info.get("path")
+                if not docx_path or not os.path.exists(docx_path):
+                    return "❌ Document file not found", []
+                
+                try:
+                    use_llm = "LLM" in mode
+                    chunks = chunk_docx_with_llm(docx_path, use_llm=use_llm)
+                    
+                    # Format for dataframe
+                    data = []
+                    for i, chunk in enumerate(chunks):
+                        content = chunk.get("content", "")
+                        preview_text = content[:150].replace("\n", " ") + ("..." if len(content) > 150 else "")
+                        data.append([i + 1, len(content), preview_text])
+                    
+                    mode_name = "LLM" if use_llm else "Fast"
+                    info = f"### ✅ {len(chunks)} chunks ({mode_name} mode)\n\nTotal characters: {sum(len(c.get('content', '')) for c in chunks)}"
+                    return info, data
+                except Exception as e:
+                    return f"❌ Error: {str(e)}", []
+            
+            preview_chunks_btn.click(
+                fn=preview_chunks_handler,
+                inputs=[uploaded_doc_dropdown, chunk_mode],
+                outputs=[chunk_preview_info, chunk_preview]
+            )
+            
+            # Index building handler
+            def build_index_handler(doc_choice, mode):
+                if not doc_choice:
+                    yield "❌ Please select a document first", "❌ No document selected"
+                    return
+                
+                doc_id, doc_info = get_document_by_display_name(doc_choice)
+                if not doc_info:
+                    yield "❌ Document not found", "❌ Document not found"
+                    return
+                
+                docx_path = doc_info.get("path")
+                if not docx_path or not os.path.exists(docx_path):
+                    yield "❌ Document file not found", "❌ File not found"
+                    return
+                
+                use_llm = "LLM" in mode
+                mode_name = "LLM" if use_llm else "Fast"
+                
+                progress_messages = []
+                def progress_callback(msg):
+                    progress_messages.append(msg)
+                
+                yield f"🔄 Building index ({mode_name} mode)...", "🔄 Processing..."
+                
+                try:
+                    success = build_index_from_docx_with_mode(docx_path, "faiss_index", use_llm=use_llm, progress_callback=progress_callback)
+                    if success:
+                        stats = get_index_stats()
+                        count_str = str(stats['num_documents']) if stats['num_documents'] >= 0 else "?"
+                        final_status = f"✅ Index exists ({count_str} chunks)"
+                        yield "\n".join(progress_messages[-3:]) if progress_messages else "✅ Done!", final_status
+                    else:
+                        yield "❌ Failed to build index", "❌ Build failed"
+                except Exception as e:
+                    yield f"❌ Error: {str(e)}", "❌ Error"
+            
+            build_index_btn.click(
+                fn=build_index_handler,
+                inputs=[uploaded_doc_dropdown, chunk_mode],
+                outputs=[index_progress, index_status]
+            )
 
         # Step 1: PRD -> Features
         with gr.Tab("📄 Step 1: PRD → Features"):
             with gr.Row():
                 with gr.Column(scale=2):
-                    prd_doc_dropdown = gr.Dropdown(
-                        label="Select PRD Document",
-                        choices=initial_choices,
-                        value=initial_value,
-                        interactive=True
+                    # PRD Source Mode Selection
+                    prd_source_mode = gr.Radio(
+                        label="PRD Source",
+                        choices=["📁 Document", "🔍 RAG Search"],
+                        value="📁 Document"
                     )
-                    prd_doc_preview = gr.Textbox(
-                        label="Document Content Preview",
-                        value=initial_preview,
-                        lines=12,
-                        max_lines=1000,
-                        interactive=False,
-                        show_copy_button=True
-                    )
+                    
+                    # Document Mode Components
+                    with gr.Column(visible=True) as doc_mode_col:
+                        prd_doc_dropdown = gr.Dropdown(
+                            label="Select PRD Document",
+                            choices=initial_choices,
+                            value=initial_value,
+                            interactive=True
+                        )
+                        prd_doc_preview = gr.Textbox(
+                            label="Document Content Preview",
+                            value=initial_preview,
+                            lines=12,
+                            max_lines=1000,
+                            interactive=False,
+                            show_copy_button=True
+                        )
+                    
+                    # RAG Mode Components
+                    with gr.Column(visible=False) as rag_mode_col:
+                        rag_query = gr.Textbox(
+                            label="RAG Query",
+                            placeholder="Enter keywords or questions to search PRD knowledge base...",
+                            lines=2
+                        )
+                        with gr.Row():
+                            rag_top_k = gr.Slider(
+                                minimum=1, maximum=20, step=1, value=7,
+                                label="Top K Results"
+                            )
+                            rag_search_btn = gr.Button("🔍 Search", variant="secondary")
+                        rag_status = gr.Textbox(
+                            label="RAG Status",
+                            value="⏳ Enter query and click Search",
+                            interactive=False,
+                            lines=1
+                        )
+                        rag_content_preview = gr.Textbox(
+                            label="Retrieved PRD Content",
+                            placeholder="Retrieved content will appear here...",
+                            lines=12,
+                            max_lines=1000,
+                            interactive=False,
+                            show_copy_button=True
+                        )
+                    
                     feature_requirement = gr.Textbox(
                         label="Additional Requirements (Optional)",
                         placeholder="E.g., Focus on user interaction features...",
@@ -289,6 +457,43 @@ def init_gradio_page():
                         )
                         save_feature_rating_btn = gr.Button("💾 Save Rating")
                         feature_rating_status = gr.Textbox(label="", interactive=False, lines=1)
+            
+            # PRD Source Mode Toggle
+            def toggle_prd_source_mode(mode):
+                if mode == "📁 Document":
+                    return gr.Column(visible=True), gr.Column(visible=False)
+                else:
+                    return gr.Column(visible=False), gr.Column(visible=True)
+            
+            prd_source_mode.change(
+                fn=toggle_prd_source_mode,
+                inputs=prd_source_mode,
+                outputs=[doc_mode_col, rag_mode_col]
+            )
+            
+            # RAG Search Handler
+            def rag_search_handler(query, top_k):
+                if not query or not query.strip():
+                    return "⚠️ Please enter a query", ""
+                
+                if not check_index_exists("faiss_index"):
+                    return "❌ FAISS index not found. Please build index first.", ""
+                
+                try:
+                    fragments = retrieve_knowledge(query, top_k=int(top_k), use_reranker=True)
+                    if not fragments:
+                        return "⚠️ No results found", ""
+                    
+                    content = format_retrieved_content(fragments, query)
+                    return f"✅ Retrieved {len(fragments)} fragments", content
+                except Exception as e:
+                    return f"❌ Error: {str(e)}", ""
+            
+            rag_search_btn.click(
+                fn=rag_search_handler,
+                inputs=[rag_query, rag_top_k],
+                outputs=[rag_status, rag_content_preview]
+            )
 
         # Document upload event bindings
         doc_upload.upload(
@@ -572,23 +777,31 @@ def init_gradio_page():
             )
 
         # Event handlers for generation
-        def generate_features_handler(backend, doc_choice, requirement):
-            # Get PRD text from document or direct input
-            if doc_choice:
-                doc_id, doc_info = get_document_by_display_name(doc_choice)
-                if doc_info:
-                    prd_text = doc_info["content"]
-                    global_data["document_id"] = doc_id
-                    global_data["document_display_name"] = doc_info["display_name"]
+        def generate_features_handler(backend, source_mode, doc_choice, rag_content, requirement):
+            # Get PRD text based on source mode
+            if source_mode == "📁 Document":
+                if doc_choice:
+                    doc_id, doc_info = get_document_by_display_name(doc_choice)
+                    if doc_info:
+                        prd_text = doc_info["content"]
+                        global_data["document_id"] = doc_id
+                        global_data["document_display_name"] = doc_info["display_name"]
+                    else:
+                        yield "⚠️ Document not found", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                        return
                 else:
-                    yield "⚠️ Document not found", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                    yield "⚠️ Please select a document", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
                     return
-            else:
-                yield "⚠️ Please select a document", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
-                return
+            else:  # RAG Mode
+                if not rag_content or not rag_content.strip():
+                    yield "⚠️ Please search and retrieve content first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                    return
+                prd_text = rag_content
+                global_data["document_id"] = "rag_retrieved"
+                global_data["document_display_name"] = "RAG Retrieved Content"
 
             if not prd_text or not prd_text.strip():
-                yield "⚠️ Document content is empty", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                yield "⚠️ PRD content is empty", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
                 return
 
             if backend == "vLLM (Streaming)":
@@ -611,13 +824,13 @@ def init_gradio_page():
 
         gen_feature_btn.click(
             fn=generate_features_handler,
-            inputs=[model_backend, prd_doc_dropdown, feature_requirement],
+            inputs=[model_backend, prd_source_mode, prd_doc_dropdown, rag_content_preview, feature_requirement],
             outputs=[feature_output, feature_thinking, feature_dropdown, feature_dropdown2]
         )
 
         re_gen_feature_btn.click(
             fn=generate_features_handler,
-            inputs=[model_backend, prd_doc_dropdown, feature_requirement],
+            inputs=[model_backend, prd_source_mode, prd_doc_dropdown, rag_content_preview, feature_requirement],
             outputs=[feature_output, feature_thinking, feature_dropdown, feature_dropdown2]
         )
 
