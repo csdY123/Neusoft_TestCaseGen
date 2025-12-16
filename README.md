@@ -14,3 +14,12 @@ uvicorn api:app --host 0.0.0.0 --port 8080 --reload
 
 # gradio
 python app.py
+
+cat /etc/systemd/system/snap.docker.dockerd.service.d/proxy.conf && sudo systemctl daemon-reload && sudo snap restart docker
+
+# docker
+先下载bge-large和bge-m3两个embedding模型：
+docker exec ollama ollama pull bge-large && docker exec ollama ollama pull bge-m3
+docker exec ollama ollama list
+docker run -d --gpus all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+docker exec -it ollama ollama run qwen3:8b

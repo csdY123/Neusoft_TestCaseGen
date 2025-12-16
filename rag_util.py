@@ -1,6 +1,6 @@
 """
 RAG utility module for knowledge retrieval
-Uses local HuggingFace embedding model (BAAI/bge-large-en-v1.5)
+Supports both local HuggingFace embedding and Ollama API embedding
 Includes LLM-based document chunking
 """
 
@@ -15,10 +15,12 @@ import torch
 import numpy as np
 import jieba
 import re
+import requests
 from typing import List, Tuple, Dict, Any, Optional, Callable
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from rank_bm25 import BM25Okapi
 from langdetect import detect
 from tqdm import tqdm
@@ -33,6 +35,14 @@ LLM_CONFIG = {
     "api_key": "EMPTY",
     "base_url": "http://localhost:12349/v1",
     "model": "Qwen3-8B"
+}
+
+# Embedding config - supports both local and API modes
+EMBEDDING_CONFIG = {
+    "mode": "local",  # "local" or "api"
+    "api_base_url": "http://localhost:11434",  # Ollama API base URL
+    "api_model": "bge-large",  # Ollama embedding model name
+    "local_model_path": "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/models/bge-large-zh-v1.5"
 }
 
 # Global instances
@@ -62,6 +72,65 @@ class LocalEmbeddings:
     
     def embed_query(self, text: str) -> List[float]:
         return self.model.embed_query(text)
+
+
+class OllamaEmbeddings:
+    """Ollama API embedding model wrapper"""
+    
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "bge-large"):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self._dimension = None
+        logger.info(f"Initialized OllamaEmbeddings with model: {model} at {base_url}")
+    
+    def _get_embedding(self, text: str) -> List[float]:
+        """Get embedding for a single text via Ollama API"""
+        url = f"{self.base_url}/api/embed"
+        payload = {
+            "model": self.model,
+            "input": text
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            embeddings = result.get("embeddings", [])
+            if embeddings and len(embeddings) > 0:
+                return embeddings[0]
+            raise ValueError("No embeddings returned from Ollama API")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama API request failed: {e}")
+            raise
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents"""
+        embeddings = []
+        for text in texts:
+            embedding = self._get_embedding(text)
+            embeddings.append(embedding)
+        return embeddings
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a query text"""
+        return self._get_embedding(text)
+
+
+class EmbeddingsWrapper(Embeddings):
+    """Wrapper class that provides unified interface for different embedding backends.
+    Compatible with LangChain FAISS vectorstore.
+    Inherits from LangChain Embeddings base class for proper compatibility.
+    """
+    
+    def __init__(self, embeddings_impl):
+        self._impl = embeddings_impl
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents."""
+        return self._impl.embed_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query text."""
+        return self._impl.embed_query(text)
 
 
 class Qwen3Reranker:
@@ -137,14 +206,63 @@ class Qwen3Reranker:
         return scores
 
 
-def get_embeddings() -> LocalEmbeddings:
-    """Get or create embedding model instance"""
+def configure_embeddings(
+    mode: str = None,
+    api_base_url: str = None,
+    api_model: str = None,
+    local_model_path: str = None
+):
+    """Configure embedding model settings.
+    
+    Args:
+        mode: "local" for HuggingFace local model, "api" for Ollama API
+        api_base_url: Ollama API base URL (for api mode)
+        api_model: Ollama embedding model name (for api mode)
+        local_model_path: Path to local HuggingFace model (for local mode)
+    """
+    global _embeddings
+    
+    if mode is not None:
+        EMBEDDING_CONFIG["mode"] = mode
+    if api_base_url is not None:
+        EMBEDDING_CONFIG["api_base_url"] = api_base_url
+    if api_model is not None:
+        EMBEDDING_CONFIG["api_model"] = api_model
+    if local_model_path is not None:
+        EMBEDDING_CONFIG["local_model_path"] = local_model_path
+    
+    # Reset embeddings instance to apply new config
+    _embeddings = None
+    logger.info(f"Embedding config updated: mode={EMBEDDING_CONFIG['mode']}, "
+                f"api_model={EMBEDDING_CONFIG['api_model']}")
+
+
+def get_embeddings() -> EmbeddingsWrapper:
+    """Get or create embedding model instance based on current config"""
     global _embeddings
     if _embeddings is None:
-        logger.info("Initializing local embedding model...")
-        _embeddings = LocalEmbeddings()
-        logger.info("Embedding model initialized")
+        mode = EMBEDDING_CONFIG.get("mode", "local")
+        
+        if mode == "api":
+            logger.info(f"Initializing Ollama API embedding model: {EMBEDDING_CONFIG['api_model']}")
+            impl = OllamaEmbeddings(
+                base_url=EMBEDDING_CONFIG["api_base_url"],
+                model=EMBEDDING_CONFIG["api_model"]
+            )
+            _embeddings = EmbeddingsWrapper(impl)
+            logger.info("Ollama embedding model initialized")
+        else:
+            logger.info("Initializing local HuggingFace embedding model...")
+            impl = LocalEmbeddings(model_name=EMBEDDING_CONFIG.get("local_model_path"))
+            _embeddings = EmbeddingsWrapper(impl)
+            logger.info("Local embedding model initialized")
+    
     return _embeddings
+
+
+def get_embedding_config() -> Dict[str, Any]:
+    """Get current embedding configuration"""
+    return EMBEDDING_CONFIG.copy()
 
 
 def load_vectorstore(index_directory: str = "faiss_index") -> Optional[FAISS]:
@@ -159,8 +277,9 @@ def load_vectorstore(index_directory: str = "faiss_index") -> Optional[FAISS]:
     if _vectorstore is None:
         logger.info(f"Loading FAISS index from {index_directory}")
         embeddings = get_embeddings()
+        # Use the wrapper's model attribute which points to itself
         _vectorstore = FAISS.load_local(
-            index_directory, embeddings.model, allow_dangerous_deserialization=True
+            index_directory, embeddings, allow_dangerous_deserialization=True
         )
         logger.info("FAISS index loaded")
     
@@ -264,7 +383,7 @@ def hybrid_search(
 def retrieve_knowledge(
     query: str,
     top_k: int = 7,
-    use_reranker: bool = True,
+    use_reranker: bool = False,
     index_directory: str = "faiss_index"
 ) -> List[str]:
     """Retrieve relevant knowledge fragments for a query"""
@@ -750,7 +869,7 @@ def build_faiss_index(
     logger.info("Building FAISS index...")
     
     first_batch = documents[:min(batch_size, len(documents))]
-    vectorstore = FAISS.from_documents(first_batch, embeddings.model)
+    vectorstore = FAISS.from_documents(first_batch, embeddings)
     remaining = documents[min(batch_size, len(documents)):]
     
     total_batches = (len(remaining) + batch_size - 1) // batch_size
@@ -833,16 +952,16 @@ def build_index_from_docx_with_mode(
             progress_callback("Loading existing index and adding documents...")
         try:
             vectorstore = FAISS.load_local(
-                index_directory, embeddings.model, allow_dangerous_deserialization=True
+                index_directory, embeddings, allow_dangerous_deserialization=True
             )
             vectorstore.add_documents(documents)
         except Exception as e:
             logger.warning(f"Failed to load existing index: {e}, creating new one")
-            vectorstore = FAISS.from_documents(documents, embeddings.model)
+            vectorstore = FAISS.from_documents(documents, embeddings)
     else:
         if progress_callback:
             progress_callback("Creating new index...")
-        vectorstore = FAISS.from_documents(documents, embeddings.model)
+        vectorstore = FAISS.from_documents(documents, embeddings)
     
     vectorstore.save_local(index_directory)
     _vectorstore = vectorstore
@@ -948,7 +1067,7 @@ def build_jsonl_index(jsonl_path: str, index_name: str = "jsonl_index") -> bool:
         return False
     
     embeddings = get_embeddings()
-    vectorstore = FAISS.from_documents(documents, embeddings.model)
+    vectorstore = FAISS.from_documents(documents, embeddings)
     _jsonl_vectorstore[index_name] = vectorstore
     
     logger.info(f"Built JSONL index with {len(documents)} documents")

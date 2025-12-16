@@ -26,7 +26,8 @@ from rating_util import save_rating, get_ratings, get_rating_summary, export_rat
 from rag_util import (
     retrieve_knowledge, format_retrieved_content, check_index_exists,
     build_index_from_docx, build_index_from_docx_with_mode, get_index_stats,
-    chunk_docx_with_llm, retrieve_jsonl_examples, format_jsonl_examples_for_prompt
+    chunk_docx_with_llm, retrieve_jsonl_examples, format_jsonl_examples_for_prompt,
+    configure_embeddings, get_embedding_config
 )
 
 # Model configuration
@@ -41,6 +42,9 @@ MODEL_CONFIG = {
         "client": None
     }
 }
+
+# Available Ollama embedding models
+OLLAMA_EMBEDDING_MODELS = ["bge-large", "bge-m3"]
 
 # Global data
 global_data = {
@@ -171,11 +175,17 @@ def init_gradio_page():
                 )
             with gr.Row():
                 with gr.Column(visible=True) as vllm_config:
-                    vllm_url = gr.Textbox(
-                        label="vLLM API URL",
-                        value="http://localhost:12349/v1",
-                        placeholder="http://localhost:8000/v1"
-                    )
+                    with gr.Row():
+                        vllm_host = gr.Textbox(
+                            label="vLLM Host",
+                            value="localhost",
+                            placeholder="localhost or IP address"
+                        )
+                        vllm_port = gr.Number(
+                            label="Port",
+                            value=12349,
+                            precision=0
+                        )
                     vllm_model = gr.Textbox(
                         label="Model ID",
                         value="Qwen3-8B",
@@ -183,6 +193,17 @@ def init_gradio_page():
                     )
                     init_vllm_btn = gr.Button("🚀 Initialize vLLM", variant="primary")
                 with gr.Column(visible=False) as ollama_config:
+                    with gr.Row():
+                        ollama_host = gr.Textbox(
+                            label="Ollama Host",
+                            value="localhost",
+                            placeholder="localhost or IP address"
+                        )
+                        ollama_port = gr.Number(
+                            label="Port",
+                            value=11434,
+                            precision=0
+                        )
                     ollama_model = gr.Textbox(
                         label="Ollama Model",
                         value="qwen3:8b",
@@ -191,6 +212,85 @@ def init_gradio_page():
                     init_ollama_btn = gr.Button("🚀 Initialize Ollama", variant="primary")
 
             model_status = gr.Textbox(label="Model Status", value="⏳ Model not initialized", interactive=False)
+        
+        # Embedding Configuration Section
+        with gr.Accordion("🔤 Embedding Configuration", open=True):
+            gr.Markdown("Configure embedding model for RAG search. Supports local HuggingFace model or Ollama API.")
+            with gr.Row():
+                embedding_mode = gr.Radio(
+                    label="Embedding Mode",
+                    choices=["Local (HuggingFace)", "API (Ollama)"],
+                    value="API (Ollama)"
+                )
+            
+            with gr.Row():
+                with gr.Column(visible=False) as embed_local_config:
+                    embed_local_path = gr.Textbox(
+                        label="Local Model Path",
+                        value="/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/models/bge-large-zh-v1.5",
+                        placeholder="Path to local HuggingFace embedding model"
+                    )
+                
+                with gr.Column(visible=True) as embed_api_config:
+                    with gr.Row():
+                        embed_api_host = gr.Textbox(
+                            label="Ollama Host",
+                            value="localhost",
+                            placeholder="localhost or IP address"
+                        )
+                        embed_api_port = gr.Number(
+                            label="Port",
+                            value=11434,
+                            precision=0
+                        )
+                    embed_api_model = gr.Dropdown(
+                        label="Embedding Model",
+                        choices=OLLAMA_EMBEDDING_MODELS,
+                        value="bge-large",
+                        allow_custom_value=True
+                    )
+            
+            init_embedding_btn = gr.Button("🚀 Initialize Embedding", variant="primary")
+            embedding_status = gr.Textbox(label="Embedding Status", value="⏳ Using Ollama API embedding (bge-large)", interactive=False)
+            
+            def toggle_embedding_config(mode):
+                if mode == "Local (HuggingFace)":
+                    return gr.Column(visible=True), gr.Column(visible=False)
+                else:
+                    return gr.Column(visible=False), gr.Column(visible=True)
+            
+            embedding_mode.change(
+                fn=toggle_embedding_config,
+                inputs=embedding_mode,
+                outputs=[embed_local_config, embed_api_config]
+            )
+            
+            def init_embedding_handler(mode, local_path, api_host, api_port, api_model):
+                """Initialize embedding model based on selected mode"""
+                try:
+                    if mode == "Local (HuggingFace)":
+                        configure_embeddings(
+                            mode="local",
+                            local_model_path=local_path
+                        )
+                        return f"✅ Local embedding initialized: {local_path.split('/')[-1]}"
+                    else:
+                        api_port_int = int(api_port)
+                        base_url = f"http://{api_host}:{api_port_int}"
+                        configure_embeddings(
+                            mode="api",
+                            api_base_url=base_url,
+                            api_model=api_model
+                        )
+                        return f"✅ Ollama embedding initialized: {api_model} @ {base_url}"
+                except Exception as e:
+                    return f"❌ Error: {str(e)}"
+            
+            init_embedding_btn.click(
+                fn=init_embedding_handler,
+                inputs=[embedding_mode, embed_local_path, embed_api_host, embed_api_port, embed_api_model],
+                outputs=embedding_status
+            )
 
             def toggle_model_config(backend):
                 if backend == "vLLM (Streaming)":
@@ -204,13 +304,34 @@ def init_gradio_page():
                 outputs=[vllm_config, ollama_config]
             )
 
-            init_vllm_btn.click(fn=init_vllm, inputs=[vllm_url, vllm_model], outputs=model_status)
+            def init_vllm_with_host_port(host, port, model_id):
+                """Initialize vLLM with host and port"""
+                port_int = int(port)
+                base_url = f"http://{host}:{port_int}/v1"
+                return init_vllm(base_url, model_id)
+            
+            init_vllm_btn.click(
+                fn=init_vllm_with_host_port,
+                inputs=[vllm_host, vllm_port, vllm_model],
+                outputs=model_status
+            )
 
-            def init_ollama_with_model(model_name):
+            def init_ollama_with_config(host, port, model_name):
+                """Initialize Ollama with host, port and model"""
+                port_int = int(port)
+                base_url = f"http://{host}:{port_int}"
                 MODEL_CONFIG["ollama"]["model"] = model_name
-                return init_ollama()
+                MODEL_CONFIG["ollama"]["llm"] = OllamaLLM(
+                    model=model_name,
+                    base_url=base_url
+                )
+                return f"✅ Ollama initialized (Host: {host}:{port_int}, Model: {model_name})"
 
-            init_ollama_btn.click(fn=init_ollama_with_model, inputs=ollama_model, outputs=model_status)
+            init_ollama_btn.click(
+                fn=init_ollama_with_config,
+                inputs=[ollama_host, ollama_port, ollama_model],
+                outputs=model_status
+            )
 
         gr.Markdown("---")
 
@@ -482,7 +603,7 @@ def init_gradio_page():
                     return "❌ FAISS index not found. Please build index first.", ""
                 
                 try:
-                    fragments = retrieve_knowledge(query, top_k=int(top_k), use_reranker=True)
+                    fragments = retrieve_knowledge(query, top_k=int(top_k), use_reranker=False)
                     if not fragments:
                         return "⚠️ No results found", ""
                     
