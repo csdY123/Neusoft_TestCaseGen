@@ -52,5 +52,50 @@
     "score": 4,
     "comment": "",
     "timestamp": "2025-12-04T09:09:45.120513"
+  },
+  {
+    "type": "features",
+    "document_id": "rag_retrieved",
+    "item_id": "all_features",
+    "item_name": "8 features",
+    "score": 4,
+    "comment": "",
+    "timestamp": "2025-12-10T17:06:09.124239"
+  },
+  {
+    "type": "test_points",
+    "document_id": "rag_retrieved",
+    "item_id": "feature_2_test_points",
+    "item_name": "2. USB离线数据升级",
+    "score": 4,
+    "comment": "",
+    "timestamp": "2025-12-10T17:07:20.174707"
+  },
+  {
+    "type": "features",
+    "document_id": "rag_retrieved",
+    "item_id": "all_features",
+    "item_name": "8 features",
+    "score": 4,
+    "comment": "",
+    "timestamp": "2025-12-10T17:17:23.144916"
+  },
+  {
+    "type": "features",
+    "document_id": "rag_retrieved",
+    "item_id": "all_features",
+    "item_name": "3 features",
+    "score": 4,
+    "comment": "",
+    "timestamp": "2025-12-10T17:20:09.164667"
+  },
+  {
+    "type": "test_points",
+    "document_id": "rag_retrieved",
+    "item_id": "feature_2_test_points",
+    "item_name": "2. USB离线数据升级",
+    "score": 5,
+    "comment": "",
+    "timestamp": "2025-12-10T17:21:07.782491"
   }
 ]

@@ -6,6 +6,7 @@ import gradio as gr
 from model_util import generate_response, generate_response_vllm, generate_response_vllm_stream
 from parse_util import robust_json_parse
 from prompt_util import load_prompt_template
+from rag_util import retrieve_jsonl_examples, format_jsonl_examples_for_prompt
 
 
 # >>>>>>>> Feature Generation Start <<<<<<<<
@@ -414,3 +415,216 @@ def parse_test_cases(response, feature, test_point):
         return error_msg, f"Error: {str(e)}", []
 
 # >>>>>>>> Test Case Generation End <<<<<<<<
+
+
+# >>>>>>>> UI Automation Test Case Generation Start <<<<<<<<
+
+# Default path for JSONL knowledge base
+DEFAULT_JSONL_PATH = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_eval_data.jsonl"
+
+
+def generate_ui_automation_for_gradio(global_data: dict, llm,
+                                      prd_text: str, feature_text: str, test_point_text: str,
+                                      test_case_name: str = "",
+                                      use_rag: bool = True, rag_top_k: int = 3,
+                                      additional_requirement: str = "",
+                                      jsonl_path: str = None,
+                                      use_vllm: bool = False, vllm_client=None, model_id: str = None):
+    """Generate UI automation test steps for Gradio (non-streaming)"""
+    if not prd_text or not feature_text or not test_point_text:
+        return "⚠️ Please provide PRD document, feature, and test point", "", []
+
+    output, thinking, steps = generate_ui_automation_steps(
+        llm, prd_text, feature_text, test_point_text, test_case_name,
+        use_rag=use_rag, rag_top_k=rag_top_k,
+        additional_requirement=additional_requirement,
+        jsonl_path=jsonl_path,
+        use_vllm=use_vllm, vllm_client=vllm_client, model_id=model_id
+    )
+
+    # Store in global_data
+    global_data["ui_automation_steps"] = steps
+
+    return output, thinking, steps
+
+
+def generate_ui_automation_for_gradio_stream(global_data: dict, vllm_client: OpenAI, model_id: str,
+                                             prd_text: str, feature_text: str, test_point_text: str,
+                                             test_case_name: str = "",
+                                             use_rag: bool = True, rag_top_k: int = 3,
+                                             additional_requirement: str = "",
+                                             jsonl_path: str = None,
+                                             rag_examples_text: str = None,
+                                             system_prompt_name: str = "generate_ui_automation_system_prompt",
+                                             user_prompt_name: str = "generate_ui_automation_user_prompt"):
+    """Generate UI automation test steps with streaming output for Gradio
+    
+    Args:
+        rag_examples_text: Pre-retrieved RAG examples text. If provided, skip internal RAG retrieval.
+    """
+    if not prd_text or not prd_text.strip():
+        yield "⚠️ Please input PRD document", "", []
+        return
+
+    if not feature_text or not feature_text.strip():
+        yield "⚠️ Please input feature description", "", []
+        return
+
+    if not test_point_text or not test_point_text.strip():
+        yield "⚠️ Please input test point description", "", []
+        return
+
+    # Load prompts
+    system_prompt = load_prompt_template(system_prompt_name)
+    user_prompt_template = load_prompt_template(user_prompt_name)
+
+    # Use pre-retrieved RAG examples or retrieve new ones
+    if rag_examples_text is None and use_rag:
+        jsonl_file = jsonl_path or DEFAULT_JSONL_PATH
+        query = f"{feature_text} {test_point_text} {test_case_name or ''}"
+        examples = retrieve_jsonl_examples(query, jsonl_file, top_k=rag_top_k)
+        if examples:
+            rag_examples_text = format_jsonl_examples_for_prompt(examples)
+    
+    if rag_examples_text is None:
+        rag_examples_text = ""
+
+    # Build user prompt
+    user_prompt = user_prompt_template.format(
+        prd_document=prd_text,
+        feature=feature_text,
+        test_point=test_point_text,
+        test_case_name=test_case_name or "",
+        rag_examples=rag_examples_text
+    )
+
+    if additional_requirement:
+        user_prompt += f"\n\nAdditional requirement: {additional_requirement}"
+
+    # Streaming generation
+    response_text = ""
+    for partial_response in generate_response_vllm_stream(vllm_client, model_id, user_prompt, system_prompt):
+        response_text = partial_response
+        yield f"🔄 Generating...\n\n**Raw output:**\n```\n{partial_response}\n```", "", []
+
+    # Parse after generation complete
+    output, thinking, steps = parse_ui_automation_steps(response_text)
+
+    # Store in global_data
+    global_data["ui_automation_steps"] = steps
+
+    yield output, thinking, steps
+
+
+def generate_ui_automation_steps(llm, prd_text: str, feature_text: str, test_point_text: str,
+                                 test_case_name: str = "",
+                                 use_rag: bool = True, rag_top_k: int = 3,
+                                 additional_requirement: str = "",
+                                 jsonl_path: str = None,
+                                 system_prompt_name: str = "generate_ui_automation_system_prompt",
+                                 user_prompt_name: str = "generate_ui_automation_user_prompt",
+                                 use_vllm: bool = False, vllm_client=None, model_id: str = None):
+    """Generate UI automation test steps"""
+
+    system_prompt = load_prompt_template(system_prompt_name)
+    user_prompt_template = load_prompt_template(user_prompt_name)
+
+    # Retrieve RAG examples if enabled
+    rag_examples_text = ""
+    if use_rag:
+        jsonl_file = jsonl_path or DEFAULT_JSONL_PATH
+        query = f"{feature_text} {test_point_text} {test_case_name or ''}"
+        examples = retrieve_jsonl_examples(query, jsonl_file, top_k=rag_top_k)
+        if examples:
+            rag_examples_text = format_jsonl_examples_for_prompt(examples)
+
+    # Build user prompt
+    user_prompt = user_prompt_template.format(
+        prd_document=prd_text,
+        feature=feature_text,
+        test_point=test_point_text,
+        test_case_name=test_case_name or "",
+        rag_examples=rag_examples_text
+    )
+
+    if additional_requirement:
+        user_prompt += f"\n\nAdditional requirement: {additional_requirement}"
+
+    # Generate response
+    if use_vllm and vllm_client and model_id:
+        response = generate_response_vllm(vllm_client, model_id, user_prompt, system_prompt)
+    else:
+        response = generate_response(llm, user_prompt, system_prompt, enable_thinking=False)
+
+    return parse_ui_automation_steps(response)
+
+
+def parse_ui_automation_steps(response: str):
+    """Parse UI automation steps from response"""
+    try:
+        # Try to parse as JSON array directly
+        result = robust_json_parse(response)
+
+        # Handle both array and object formats
+        if isinstance(result, list):
+            steps = result
+        elif isinstance(result, dict):
+            # Try common keys
+            steps = result.get("steps", result.get("test_steps", []))
+            if not steps and len(result) == 1:
+                # Single key dict, try to get value
+                steps = list(result.values())[0]
+        else:
+            raise ValueError("Expected JSON array or object with steps")
+
+        if not isinstance(steps, list):
+            raise ValueError("Steps must be a list")
+
+        if not steps:
+            raise ValueError("No steps generated")
+
+        # Validate and normalize steps
+        validated_steps = []
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            validated_step = {
+                "step": step.get("step", i),
+                "action": step.get("action", "CLICK").upper(),
+                "instruction": step.get("instruction", "")
+            }
+            validated_steps.append(validated_step)
+
+        if not validated_steps:
+            raise ValueError("No valid steps after validation")
+
+        # Format output for display
+        output = "## UI Automation Test Steps\n\n"
+        output += "| Step | Action | Instruction |\n"
+        output += "|------|--------|-------------|\n"
+        for step in validated_steps:
+            action_emoji = {
+                "CLICK": "🖱️",
+                "SCROLL": "📜",
+                "TEXT": "⌨️",
+                "COMPLETE": "✅"
+            }.get(step["action"], "❓")
+            output += f"| {step['step']} | {action_emoji} {step['action']} | {step['instruction']} |\n"
+
+        output += f"\n\n**Total Steps**: {len(validated_steps)}\n"
+        output += f"\n**JSON Output**:\n```json\n{format_steps_json(validated_steps)}\n```"
+
+        return output, "✅ Generation complete", validated_steps
+
+    except Exception as e:
+        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response[:1000]}{'...' if len(str(response)) > 1000 else ''}\n```"
+        return error_msg, f"Error: {str(e)}", []
+
+
+def format_steps_json(steps: list) -> str:
+    """Format steps as pretty JSON string"""
+    import json
+    return json.dumps(steps, ensure_ascii=False, indent=2)
+
+
+# >>>>>>>> UI Automation Test Case Generation End <<<<<<<<

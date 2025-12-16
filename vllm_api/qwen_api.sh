@@ -10,7 +10,7 @@ vllm serve /media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/mode
     --mm-encoder-tp-mode data \
     --async-scheduling \
     --media-io-kwargs '{"video": {"num_frames": -1}}' \
-    --gpu-memory-utilization 0.4 \
+    --gpu-memory-utilization 0.3 \
     --max-model-len 32768 \
     --served-model-name Qwen3-8B \
     --host 0.0.0.0 \

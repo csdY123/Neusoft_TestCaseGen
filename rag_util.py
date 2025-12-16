@@ -46,7 +46,7 @@ class LocalEmbeddings:
     
     # Default to local cached path
     DEFAULT_MODEL_PATH = os.path.expanduser(
-        "~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5/snapshots/d4aa6901d3a41ba39fb536a557fa166f842b0e09"
+        "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/models/bge-large-zh-v1.5"
     )
     
     def __init__(self, model_name: str = None, device: str = "cuda"):
@@ -872,4 +872,161 @@ def get_index_stats(index_directory: str = "faiss_index") -> Dict[str, Any]:
             pass
     
     return {"exists": True, "num_documents": -1}  # -1 means unknown count
+
+
+# ========== JSONL RAG for UI Automation Test Cases ==========
+
+# Global cache for JSONL data
+_jsonl_data_cache = {}
+_jsonl_vectorstore = {}
+
+
+def load_jsonl_data(jsonl_path: str) -> List[Dict[str, Any]]:
+    """Load JSONL file and cache the data"""
+    global _jsonl_data_cache
+    
+    if jsonl_path in _jsonl_data_cache:
+        return _jsonl_data_cache[jsonl_path]
+    
+    if not os.path.exists(jsonl_path):
+        logger.warning(f"JSONL file not found: {jsonl_path}")
+        return []
+    
+    data = []
+    try:
+        with open(jsonl_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        item = json.loads(line)
+                        data.append(item)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse line: {e}")
+                        continue
+        _jsonl_data_cache[jsonl_path] = data
+        logger.info(f"Loaded {len(data)} items from {jsonl_path}")
+    except Exception as e:
+        logger.error(f"Failed to load JSONL: {e}")
+        return []
+    
+    return data
+
+
+def build_jsonl_index(jsonl_path: str, index_name: str = "jsonl_index") -> bool:
+    """Build FAISS index from JSONL file for RAG retrieval"""
+    global _jsonl_vectorstore
+    
+    data = load_jsonl_data(jsonl_path)
+    if not data:
+        return False
+    
+    # Create documents from JSONL entries
+    # Use prd_info fields as searchable content
+    documents = []
+    for i, item in enumerate(data):
+        prd_info = item.get("prd_info", {})
+        
+        # Combine searchable fields
+        search_text = " ".join([
+            prd_info.get("test_case_name", ""),
+            prd_info.get("test_point", ""),
+            prd_info.get("feature", ""),
+            prd_info.get("prd_document", "")
+        ])
+        
+        if search_text.strip():
+            metadata = {
+                "index": i,
+                "episode_id": item.get("episode_id", ""),
+                "source": jsonl_path
+            }
+            documents.append(Document(page_content=search_text, metadata=metadata))
+    
+    if not documents:
+        logger.error("No valid documents to index")
+        return False
+    
+    embeddings = get_embeddings()
+    vectorstore = FAISS.from_documents(documents, embeddings.model)
+    _jsonl_vectorstore[index_name] = vectorstore
+    
+    logger.info(f"Built JSONL index with {len(documents)} documents")
+    return True
+
+
+def retrieve_jsonl_examples(
+    query: str,
+    jsonl_path: str,
+    top_k: int = 3,
+    index_name: str = "jsonl_index"
+) -> List[Dict[str, Any]]:
+    """
+    Retrieve similar examples from JSONL file using RAG.
+    Returns full JSONL entries (including steps) for few-shot learning.
+    """
+    global _jsonl_vectorstore
+    
+    # Build index if not exists
+    if index_name not in _jsonl_vectorstore:
+        if not build_jsonl_index(jsonl_path, index_name):
+            return []
+    
+    vectorstore = _jsonl_vectorstore[index_name]
+    data = load_jsonl_data(jsonl_path)
+    
+    if not data:
+        return []
+    
+    # Search for similar documents
+    try:
+        results = vectorstore.similarity_search_with_score(query, k=top_k)
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        return []
+    
+    # Get full entries from original data
+    examples = []
+    seen_indices = set()
+    
+    for doc, score in results:
+        idx = doc.metadata.get("index")
+        if idx is not None and idx < len(data) and idx not in seen_indices:
+            seen_indices.add(idx)
+            examples.append(data[idx])
+    
+    logger.info(f"Retrieved {len(examples)} examples for query")
+    return examples
+
+
+def format_jsonl_examples_for_prompt(examples: List[Dict[str, Any]]) -> str:
+    """Format retrieved JSONL examples as few-shot learning examples for prompt"""
+    if not examples:
+        return ""
+    
+    formatted = "\n## Reference Examples:\n"
+    formatted += "Here are similar test cases for reference:\n\n"
+    
+    for i, example in enumerate(examples, 1):
+        prd_info = example.get("prd_info", {})
+        steps = example.get("steps", [])
+        
+        formatted += f"### Example {i}:\n"
+        formatted += f"- **Test Case Name**: {prd_info.get('test_case_name', 'N/A')}\n"
+        formatted += f"- **Feature**: {prd_info.get('feature', 'N/A')}\n"
+        formatted += f"- **Test Point**: {prd_info.get('test_point', 'N/A')}\n"
+        formatted += f"- **PRD Document**: {prd_info.get('prd_document', 'N/A')}\n"
+        formatted += f"- **Steps**:\n```json\n{json.dumps(steps, ensure_ascii=False, indent=2)}\n```\n\n"
+    
+    return formatted
+
+
+def get_jsonl_index_stats(jsonl_path: str) -> Dict[str, Any]:
+    """Get statistics about JSONL data"""
+    data = load_jsonl_data(jsonl_path)
+    return {
+        "exists": len(data) > 0,
+        "num_examples": len(data),
+        "path": jsonl_path
+    }
 

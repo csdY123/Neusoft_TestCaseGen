@@ -1,0 +1,17 @@
+请根据以下信息生成UI自动化测试步骤：
+
+## PRD需求文档：
+{prd_document}
+
+## 功能特性：
+{feature}
+
+## 测试点：
+{test_point}
+
+## 测试用例名称：
+{test_case_name}
+
+{rag_examples}
+
+根据以上信息，生成一个完整的UI自动化测试序列，覆盖测试点的所有需求。仅返回有效的JSON数组格式的测试步骤。

@@ -14,7 +14,9 @@ from generate_chain import (
     generate_features_for_gradio, generate_features_for_gradio_stream,
     generate_test_points_for_gradio, generate_test_points_for_gradio_stream,
     generate_test_cases_for_gradio, generate_test_cases_for_gradio_stream,
-    get_test_point_choices
+    get_test_point_choices,
+    generate_ui_automation_for_gradio, generate_ui_automation_for_gradio_stream,
+    DEFAULT_JSONL_PATH
 )
 from export_util import (
     export_to_json_string, save_to_server, get_saved_exports,
@@ -24,7 +26,7 @@ from rating_util import save_rating, get_ratings, get_rating_summary, export_rat
 from rag_util import (
     retrieve_knowledge, format_retrieved_content, check_index_exists,
     build_index_from_docx, build_index_from_docx_with_mode, get_index_stats,
-    chunk_docx_with_llm
+    chunk_docx_with_llm, retrieve_jsonl_examples, format_jsonl_examples_for_prompt
 )
 
 # Model configuration
@@ -575,60 +577,170 @@ def init_gradio_page():
 
         # Step 3: Test Points -> Test Cases
         with gr.Tab("📝 Step 3: Test Points → Test Cases"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    feature_dropdown2 = gr.Dropdown(
-                        label="Select Feature",
-                        choices=[],
-                        interactive=True
-                    )
-                    test_point_dropdown = gr.Dropdown(
-                        label="Select Test Point",
-                        choices=[],
-                        interactive=True
-                    )
-                    test_case_requirement = gr.Textbox(
-                        label="Additional Requirements (Optional)",
-                        placeholder="E.g., Add exception scenario test cases...",
-                        lines=2
-                    )
+            with gr.Tabs():
+                # Sub-tab 1: Traditional Test Cases
+                with gr.Tab("📋 Traditional Test Cases"):
                     with gr.Row():
-                        gen_tc_btn = gr.Button("✨ Generate Test Cases", variant="primary")
-                        regen_tc_btn = gr.Button("🔄 Regenerate Test Cases")
+                        with gr.Column(scale=1):
+                            feature_dropdown2 = gr.Dropdown(
+                                label="Select Feature",
+                                choices=[],
+                                interactive=True
+                            )
+                            test_point_dropdown = gr.Dropdown(
+                                label="Select Test Point",
+                                choices=[],
+                                interactive=True
+                            )
+                            test_case_requirement = gr.Textbox(
+                                label="Additional Requirements (Optional)",
+                                placeholder="E.g., Add exception scenario test cases...",
+                                lines=2
+                            )
+                            with gr.Row():
+                                gen_tc_btn = gr.Button("✨ Generate Test Cases", variant="primary")
+                                regen_tc_btn = gr.Button("🔄 Regenerate Test Cases")
 
+                            with gr.Row():
+                                refresh_feature_btn2 = gr.Button("🔄 Refresh Feature List")
+                                refresh_test_point_btn = gr.Button("🔄 Refresh Test Point List")
+
+                        with gr.Column(scale=3):
+                            test_case_output = gr.Markdown(label="Generated Test Cases")
+                            test_case_thinking = gr.Textbox(label="Model Status", lines=2)
+                            
+                            # Manual edit section
+                            with gr.Accordion("✏️ Edit Test Cases", open=False):
+                                tc_edit_json = gr.Textbox(
+                                    label="Edit Test Cases (JSON)",
+                                    placeholder='[{"case_id": "TC001", "title": "...", "priority": "High", "precondition": "...", "test_steps": [...], "test_data": "...", "expected_result": "...", "postcondition": "..."}]',
+                                    lines=12
+                                )
+                                with gr.Row():
+                                    load_tc_btn = gr.Button("📥 Load Current")
+                                    save_tc_btn = gr.Button("💾 Save Changes", variant="primary")
+                                tc_edit_status = gr.Textbox(label="", interactive=False, lines=1)
+                            
+                            # Manual rating section
+                            with gr.Accordion("⭐ Rate Test Cases", open=False):
+                                tc_rating = gr.Slider(
+                                    minimum=1, maximum=5, step=1, value=3,
+                                    label="Quality Score (1-5)"
+                                )
+                                tc_comment = gr.Textbox(
+                                    label="Comments",
+                                    placeholder="Add your feedback...",
+                                    lines=2
+                                )
+                                save_tc_rating_btn = gr.Button("💾 Save Rating")
+                                tc_rating_status = gr.Textbox(label="", interactive=False, lines=1)
+
+                # Sub-tab 2: UI Automation Test Cases
+                with gr.Tab("🤖 UI Automation Test Cases"):
+                    gr.Markdown("""
+                    ### Generate UI Automation Test Steps
+                    Generate step-by-step UI automation test sequences (CLICK, SCROLL, TEXT, COMPLETE) 
+                    for mobile app testing. Uses RAG to retrieve similar examples for few-shot learning.
+                    """)
+                    
                     with gr.Row():
-                        refresh_feature_btn2 = gr.Button("🔄 Refresh Feature List")
-                        refresh_test_point_btn = gr.Button("🔄 Refresh Test Point List")
-
-                with gr.Column(scale=3):
-                    test_case_output = gr.Markdown(label="Generated Test Cases")
-                    test_case_thinking = gr.Textbox(label="Model Status", lines=2)
-                    
-                    # Manual edit section
-                    with gr.Accordion("✏️ Edit Test Cases", open=False):
-                        tc_edit_json = gr.Textbox(
-                            label="Edit Test Cases (JSON)",
-                            placeholder='[{"case_id": "TC001", "title": "...", "priority": "High", "precondition": "...", "test_steps": [...], "test_data": "...", "expected_result": "...", "postcondition": "..."}]',
-                            lines=12
-                        )
-                        with gr.Row():
-                            load_tc_btn = gr.Button("📥 Load Current")
-                            save_tc_btn = gr.Button("💾 Save Changes", variant="primary")
-                        tc_edit_status = gr.Textbox(label="", interactive=False, lines=1)
-                    
-                    # Manual rating section
-                    with gr.Accordion("⭐ Rate Test Cases", open=False):
-                        tc_rating = gr.Slider(
-                            minimum=1, maximum=5, step=1, value=3,
-                            label="Quality Score (1-5)"
-                        )
-                        tc_comment = gr.Textbox(
-                            label="Comments",
-                            placeholder="Add your feedback...",
-                            lines=2
-                        )
-                        save_tc_rating_btn = gr.Button("💾 Save Rating")
-                        tc_rating_status = gr.Textbox(label="", interactive=False, lines=1)
+                        with gr.Column(scale=2):
+                            # Input section
+                            ui_prd_input = gr.Textbox(
+                                label="📄 PRD Document",
+                                placeholder="Paste the PRD document content here, or it will use the current document...",
+                                lines=6,
+                                max_lines=20
+                            )
+                            
+                            with gr.Row():
+                                with gr.Column():
+                                    ui_feature_input = gr.Textbox(
+                                        label="🎯 Feature",
+                                        placeholder="E.g., Cross-app location search and ride-hailing integration",
+                                        lines=2
+                                    )
+                                with gr.Column():
+                                    ui_testpoint_input = gr.Textbox(
+                                        label="📌 Test Point",
+                                        placeholder="E.g., Verify user can search 'grocery store' in Maps and book Uber ride to selected location",
+                                        lines=2
+                                    )
+                            
+                            ui_testcase_name_input = gr.Textbox(
+                                label="📝 Test Case Name",
+                                placeholder="E.g., Search nearby grocery store in Maps and book Uber ride to the location",
+                                lines=1
+                            )
+                            
+                            # RAG settings
+                            with gr.Accordion("🔍 RAG Settings", open=True):
+                                ui_use_rag = gr.Checkbox(
+                                    label="Enable RAG (Retrieve similar examples)",
+                                    value=True
+                                )
+                                ui_rag_topk = gr.Slider(
+                                    minimum=1, maximum=5, step=1, value=3,
+                                    label="Number of Examples to Retrieve"
+                                )
+                                ui_jsonl_path = gr.Textbox(
+                                    label="JSONL Knowledge Base Path",
+                                    value=DEFAULT_JSONL_PATH,
+                                    lines=1
+                                )
+                                with gr.Row():
+                                    preview_rag_btn = gr.Button("🔍 Preview RAG Results", variant="secondary")
+                                ui_rag_status = gr.Textbox(
+                                    label="RAG Status",
+                                    value="",
+                                    interactive=False,
+                                    lines=1
+                                )
+                                ui_rag_preview = gr.Markdown(
+                                    label="Retrieved Examples Preview",
+                                    value="*Click 'Preview RAG Results' to see retrieved examples*"
+                                )
+                            
+                            ui_additional_req = gr.Textbox(
+                                label="Additional Requirements (Optional)",
+                                placeholder="E.g., Include error handling steps, use specific app names...",
+                                lines=2
+                            )
+                            
+                            with gr.Row():
+                                gen_ui_auto_btn = gr.Button("✨ Generate UI Automation Steps", variant="primary")
+                                regen_ui_auto_btn = gr.Button("🔄 Regenerate")
+                            
+                            # Quick fill from current data
+                            with gr.Accordion("📥 Quick Fill from Current Data", open=False):
+                                gr.Markdown("Fill inputs from currently selected feature and test point")
+                                with gr.Row():
+                                    ui_feature_select = gr.Dropdown(
+                                        label="Select Feature",
+                                        choices=[],
+                                        interactive=True
+                                    )
+                                    ui_tp_select = gr.Dropdown(
+                                        label="Select Test Point",
+                                        choices=[],
+                                        interactive=True
+                                    )
+                                with gr.Row():
+                                    refresh_ui_feature_btn = gr.Button("🔄 Refresh")
+                                    fill_from_selection_btn = gr.Button("📥 Fill Inputs", variant="secondary")
+                        
+                        with gr.Column(scale=3):
+                            ui_auto_output = gr.Markdown(label="Generated UI Automation Steps")
+                            ui_auto_thinking = gr.Textbox(label="Status", lines=2)
+                            
+                            # JSON output for copy
+                            with gr.Accordion("📋 JSON Output (Copy)", open=True):
+                                ui_auto_json = gr.Code(
+                                    label="UI Automation Steps JSON",
+                                    language="json",
+                                    lines=15
+                                )
+                                copy_json_btn = gr.Button("📋 Copy to Clipboard", size="sm")
 
             refresh_feature_btn2.click(
                 fn=partial(update_feature_dropdown, global_data),
@@ -651,6 +763,77 @@ def init_gradio_page():
                 fn=partial(update_test_point_dropdown, global_data),
                 inputs=feature_dropdown2,
                 outputs=test_point_dropdown
+            )
+            
+            # UI Automation Tab Event Handlers
+            refresh_ui_feature_btn.click(
+                fn=partial(update_feature_dropdown, global_data),
+                outputs=ui_feature_select
+            )
+            
+            ui_feature_select.change(
+                fn=partial(update_test_point_dropdown, global_data),
+                inputs=ui_feature_select,
+                outputs=ui_tp_select
+            )
+            
+            def fill_ui_inputs_from_selection(feature_choice, tp_choice):
+                """Fill UI automation inputs from selected feature and test point"""
+                prd_text = global_data.get("prd_text", "")
+                
+                feature_text = ""
+                if feature_choice:
+                    feature_id = int(feature_choice.split(".")[0])
+                    feature_idx = feature_id - 1
+                    if 0 <= feature_idx < len(global_data.get("features", [])):
+                        feature = global_data["features"][feature_idx]
+                        feature_text = f"{feature.get('name', '')}: {feature.get('description', '')}"
+                
+                tp_text = ""
+                if tp_choice and feature_choice:
+                    feature_id = int(feature_choice.split(".")[0])
+                    tp_id = int(tp_choice.split(".")[0])
+                    feature_idx = feature_id - 1
+                    tp_idx = tp_id - 1
+                    if feature_idx in global_data.get("test_points", {}):
+                        tps = global_data["test_points"][feature_idx]
+                        if 0 <= tp_idx < len(tps):
+                            tp = tps[tp_idx]
+                            tp_text = f"{tp.get('name', '')}: {tp.get('description', '')}"
+                
+                return prd_text, feature_text, tp_text
+            
+            fill_from_selection_btn.click(
+                fn=fill_ui_inputs_from_selection,
+                inputs=[ui_feature_select, ui_tp_select],
+                outputs=[ui_prd_input, ui_feature_input, ui_testpoint_input]
+            )
+            
+            def preview_rag_results(feature_text, tp_text, rag_topk, jsonl_path):
+                """Preview RAG retrieved examples"""
+                if not feature_text and not tp_text:
+                    return "⚠️ Please enter feature or test point first", "*No query provided*"
+                
+                query = f"{feature_text} {tp_text}".strip()
+                if not query:
+                    return "⚠️ Query is empty", "*No query provided*"
+                
+                try:
+                    examples = retrieve_jsonl_examples(query, jsonl_path, top_k=int(rag_topk))
+                    if not examples:
+                        return "⚠️ No examples found", "*No matching examples in knowledge base*"
+                    
+                    # Format for display
+                    formatted = format_jsonl_examples_for_prompt(examples)
+                    status = f"✅ Retrieved {len(examples)} examples"
+                    return status, formatted
+                except Exception as e:
+                    return f"❌ Error: {str(e)}", f"*Error retrieving examples: {str(e)}*"
+            
+            preview_rag_btn.click(
+                fn=preview_rag_results,
+                inputs=[ui_feature_input, ui_testpoint_input, ui_rag_topk, ui_jsonl_path],
+                outputs=[ui_rag_status, ui_rag_preview]
             )
 
         # Step 4: Data Export
@@ -896,6 +1079,99 @@ def init_gradio_page():
             fn=generate_test_cases_handler,
             inputs=[model_backend, feature_dropdown2, test_point_dropdown, test_case_requirement],
             outputs=[test_case_output, test_case_thinking]
+        )
+
+        # UI Automation Test Case Generation Handlers
+        def generate_ui_automation_handler(backend, prd_text, feature_text, tp_text, tc_name,
+                                          use_rag, rag_topk, jsonl_path, additional_req):
+            """Handler for UI automation test case generation"""
+            # Use current PRD if not provided
+            if not prd_text or not prd_text.strip():
+                prd_text = global_data.get("prd_text", "")
+            
+            if not prd_text or not prd_text.strip():
+                yield "⚠️ Please provide PRD document content", "", "", "", ""
+                return
+            
+            if not feature_text or not feature_text.strip():
+                yield "⚠️ Please provide feature description", "", "", "", ""
+                return
+            
+            if not tp_text or not tp_text.strip():
+                yield "⚠️ Please provide test point description", "", "", "", ""
+                return
+            
+            # First, retrieve and show RAG examples if enabled
+            rag_status = ""
+            rag_preview = ""
+            rag_examples_text = ""
+            if use_rag:
+                yield "🔍 Retrieving reference examples...", "", "", "🔄 Searching...", ""
+                query = f"{feature_text} {tp_text} {tc_name or ''}".strip()
+                try:
+                    examples = retrieve_jsonl_examples(query, jsonl_path, top_k=int(rag_topk))
+                    if examples:
+                        rag_status = f"✅ Retrieved {len(examples)} reference examples"
+                        rag_preview = format_jsonl_examples_for_prompt(examples)
+                        rag_examples_text = rag_preview
+                    else:
+                        rag_status = "⚠️ No matching examples found"
+                        rag_preview = "*No matching examples in knowledge base*"
+                except Exception as e:
+                    rag_status = f"❌ RAG Error: {str(e)}"
+                    rag_preview = f"*Error: {str(e)}*"
+            else:
+                rag_status = "ℹ️ RAG disabled"
+                rag_preview = "*RAG is disabled*"
+            
+            # Show RAG results
+            yield "🔄 Starting generation...", "", "", rag_status, rag_preview
+            
+            if backend == "vLLM (Streaming)":
+                client = MODEL_CONFIG["vllm"]["client"]
+                model_id = MODEL_CONFIG["vllm"]["model_id"]
+                if not client:
+                    yield "⚠️ Please initialize vLLM first", "", "", rag_status, rag_preview
+                    return
+                for output in generate_ui_automation_for_gradio_stream(
+                    global_data, client, model_id,
+                    prd_text, feature_text, tp_text, tc_name,
+                    use_rag=False,  # Already retrieved above
+                    rag_top_k=int(rag_topk),
+                    additional_requirement=additional_req,
+                    jsonl_path=jsonl_path,
+                    rag_examples_text=rag_examples_text if use_rag else None
+                ):
+                    md_output, status, steps = output
+                    json_str = json.dumps(steps, ensure_ascii=False, indent=2) if steps else ""
+                    yield md_output, status, json_str, rag_status, rag_preview
+            else:
+                llm = MODEL_CONFIG["ollama"]["llm"]
+                if not llm:
+                    yield "⚠️ Please initialize Ollama first", "", "", rag_status, rag_preview
+                    return
+                output, status, steps = generate_ui_automation_for_gradio(
+                    global_data, llm,
+                    prd_text, feature_text, tp_text, tc_name,
+                    use_rag=use_rag, rag_top_k=int(rag_topk),
+                    additional_requirement=additional_req,
+                    jsonl_path=jsonl_path
+                )
+                json_str = json.dumps(steps, ensure_ascii=False, indent=2) if steps else ""
+                yield output, status, json_str, rag_status, rag_preview
+
+        gen_ui_auto_btn.click(
+            fn=generate_ui_automation_handler,
+            inputs=[model_backend, ui_prd_input, ui_feature_input, ui_testpoint_input, ui_testcase_name_input,
+                   ui_use_rag, ui_rag_topk, ui_jsonl_path, ui_additional_req],
+            outputs=[ui_auto_output, ui_auto_thinking, ui_auto_json, ui_rag_status, ui_rag_preview]
+        )
+
+        regen_ui_auto_btn.click(
+            fn=generate_ui_automation_handler,
+            inputs=[model_backend, ui_prd_input, ui_feature_input, ui_testpoint_input, ui_testcase_name_input,
+                   ui_use_rag, ui_rag_topk, ui_jsonl_path, ui_additional_req],
+            outputs=[ui_auto_output, ui_auto_thinking, ui_auto_json, ui_rag_status, ui_rag_preview]
         )
 
         # Rating handlers
