@@ -78,6 +78,36 @@ def get_feature_choices_list(global_data):
     return [f"{f['id']}. {f['name']}" for f in global_data["features"]]
 
 
+def get_test_case_name_choices(global_data, feature_choice, tp_choice):
+    """Get test case name choices list based on selected feature and test point"""
+    if not feature_choice or not tp_choice:
+        return []
+    
+    try:
+        feature_id = int(feature_choice.split(".")[0])
+        tp_id = int(tp_choice.split(".")[0])
+        feature_idx = feature_id - 1
+        tp_idx = tp_id - 1
+        
+        key = (feature_idx, tp_idx)
+        if key not in global_data.get("test_cases", {}):
+            return []
+        
+        test_cases = global_data["test_cases"][key]
+        # Return list of test case titles/names
+        choices = []
+        for tc in test_cases:
+            case_id = tc.get("case_id", "")
+            title = tc.get("title", "")
+            if case_id and title:
+                choices.append(f"{case_id}: {title}")
+            elif title:
+                choices.append(title)
+        return choices
+    except (ValueError, KeyError, IndexError):
+        return []
+
+
 def export_all_data(global_data):
     """Export all generated data as JSON"""
     export_data = {
@@ -618,12 +648,8 @@ def init_gradio_page():
                 outputs=[rag_status, rag_content_preview]
             )
 
-        # Document upload event bindings
-        doc_upload.upload(
-            fn=handle_file_upload,
-            inputs=doc_upload,
-            outputs=[uploaded_doc_dropdown, doc_preview, prd_doc_dropdown, prd_doc_preview]
-        )
+        # Document upload event bindings (will be moved after all UI components are defined)
+        # Note: doc_upload.upload binding is moved to after UI Automation tab definition
 
         uploaded_doc_dropdown.change(
             fn=on_doc_dropdown_change,
@@ -767,31 +793,59 @@ def init_gradio_page():
                     with gr.Row():
                         with gr.Column(scale=2):
                             # Input section
+                            # PRD Document Content - auto-filled from Step 1 (RAG Search or Document)
                             ui_prd_input = gr.Textbox(
-                                label="📄 PRD Document",
-                                placeholder="Paste the PRD document content here, or it will use the current document...",
+                                label="📄 PRD Document Content",
+                                placeholder="PRD content will be auto-filled from Step 1 (RAG Search or Document), or paste manually...",
                                 lines=6,
                                 max_lines=20
                             )
                             
                             with gr.Row():
                                 with gr.Column():
-                                    ui_feature_input = gr.Textbox(
+                                    # Feature - Dropdown with custom input support
+                                    ui_feature_dropdown = gr.Dropdown(
                                         label="🎯 Feature",
-                                        placeholder="E.g., Cross-app location search and ride-hailing integration",
-                                        lines=2
+                                        choices=[],
+                                        value=None,
+                                        allow_custom_value=True,
+                                        interactive=True
+                                    )
+                                    ui_feature_input = gr.Textbox(
+                                        label="🎯 Feature Description",
+                                        placeholder="Feature description will be auto-filled when feature is selected, or enter manually...",
+                                        lines=2,
+                                        visible=False
                                     )
                                 with gr.Column():
-                                    ui_testpoint_input = gr.Textbox(
+                                    # Test Point - Dropdown with custom input support
+                                    ui_testpoint_dropdown = gr.Dropdown(
                                         label="📌 Test Point",
-                                        placeholder="E.g., Verify user can search 'grocery store' in Maps and book Uber ride to selected location",
-                                        lines=2
+                                        choices=[],
+                                        value=None,
+                                        allow_custom_value=True,
+                                        interactive=True
+                                    )
+                                    ui_testpoint_input = gr.Textbox(
+                                        label="📌 Test Point Description",
+                                        placeholder="Test point description will be auto-filled when test point is selected, or enter manually...",
+                                        lines=2,
+                                        visible=False
                                     )
                             
-                            ui_testcase_name_input = gr.Textbox(
+                            # Test Case Name - Dropdown with custom input support
+                            ui_testcase_name_dropdown = gr.Dropdown(
                                 label="📝 Test Case Name",
-                                placeholder="E.g., Search nearby grocery store in Maps and book Uber ride to the location",
-                                lines=1
+                                choices=[],
+                                value=None,
+                                allow_custom_value=True,
+                                interactive=True
+                            )
+                            ui_testcase_name_input = gr.Textbox(
+                                label="📝 Test Case Name (Text)",
+                                placeholder="Test case name will be auto-filled when test case is selected, or enter manually...",
+                                lines=1,
+                                visible=False
                             )
                             
                             # RAG settings
@@ -911,6 +965,7 @@ def init_gradio_page():
                         feature_text = f"{feature.get('name', '')}: {feature.get('description', '')}"
                 
                 tp_text = ""
+                tp_choices = []
                 if tp_choice and feature_choice:
                     feature_id = int(feature_choice.split(".")[0])
                     tp_id = int(tp_choice.split(".")[0])
@@ -921,17 +976,67 @@ def init_gradio_page():
                         if 0 <= tp_idx < len(tps):
                             tp = tps[tp_idx]
                             tp_text = f"{tp.get('name', '')}: {tp.get('description', '')}"
+                        # Get test point choices for the selected feature
+                        tp_choices = get_test_point_choices(global_data, feature_choice)
                 
-                return prd_text, feature_text, tp_text
+                # Also update test case name dropdown if both feature and test point are selected
+                tc_choices = []
+                if feature_choice and tp_choice:
+                    tc_choices = get_test_case_name_choices(global_data, feature_choice, tp_choice)
+                
+                return (prd_text, feature_choice, feature_text, tp_choice, tp_text, 
+                       gr.Dropdown(choices=tp_choices, value=tp_choice if tp_choice else None),
+                       gr.Dropdown(choices=tc_choices))
             
             fill_from_selection_btn.click(
                 fn=fill_ui_inputs_from_selection,
                 inputs=[ui_feature_select, ui_tp_select],
-                outputs=[ui_prd_input, ui_feature_input, ui_testpoint_input]
+                outputs=[ui_prd_input, ui_feature_dropdown, ui_feature_input, 
+                        ui_testpoint_dropdown, ui_testpoint_input, ui_testcase_name_dropdown]
             )
             
-            def preview_rag_results(feature_text, tp_text, rag_topk, jsonl_path):
+            def preview_rag_results(feature_dropdown_val, tp_dropdown_val, rag_topk, jsonl_path):
                 """Preview RAG retrieved examples"""
+                # Extract feature text from dropdown value
+                feature_text = ""
+                if feature_dropdown_val:
+                    try:
+                        if "." in feature_dropdown_val and feature_dropdown_val.split(".")[0].isdigit():
+                            feature_id = int(feature_dropdown_val.split(".")[0])
+                            feature_idx = feature_id - 1
+                            if 0 <= feature_idx < len(global_data.get("features", [])):
+                                feature = global_data["features"][feature_idx]
+                                feature_text = f"{feature.get('name', '')} {feature.get('description', '')}"
+                            else:
+                                feature_text = feature_dropdown_val
+                        else:
+                            feature_text = feature_dropdown_val
+                    except (ValueError, IndexError):
+                        feature_text = feature_dropdown_val
+                
+                # Extract test point text from dropdown value
+                tp_text = ""
+                if tp_dropdown_val:
+                    try:
+                        if "." in tp_dropdown_val and tp_dropdown_val.split(".")[0].isdigit() and feature_dropdown_val and "." in feature_dropdown_val:
+                            feature_id = int(feature_dropdown_val.split(".")[0])
+                            tp_id = int(tp_dropdown_val.split(".")[0])
+                            feature_idx = feature_id - 1
+                            tp_idx = tp_id - 1
+                            if feature_idx in global_data.get("test_points", {}):
+                                tps = global_data["test_points"][feature_idx]
+                                if 0 <= tp_idx < len(tps):
+                                    tp = tps[tp_idx]
+                                    tp_text = f"{tp.get('name', '')} {tp.get('description', '')}"
+                                else:
+                                    tp_text = tp_dropdown_val
+                            else:
+                                tp_text = tp_dropdown_val
+                        else:
+                            tp_text = tp_dropdown_val
+                    except (ValueError, IndexError, KeyError):
+                        tp_text = tp_dropdown_val
+                
                 if not feature_text and not tp_text:
                     return "⚠️ Please enter feature or test point first", "*No query provided*"
                 
@@ -953,9 +1058,131 @@ def init_gradio_page():
             
             preview_rag_btn.click(
                 fn=preview_rag_results,
-                inputs=[ui_feature_input, ui_testpoint_input, ui_rag_topk, ui_jsonl_path],
+                inputs=[ui_feature_dropdown, ui_testpoint_dropdown, ui_rag_topk, ui_jsonl_path],
                 outputs=[ui_rag_status, ui_rag_preview]
             )
+            
+            # UI Automation Dropdown Event Handlers for Interconnection
+            def on_ui_feature_dropdown_change(global_data, feature_choice):
+                """Handle feature dropdown change - update test point dropdown and fill feature text"""
+                # Update test point dropdown choices - only if feature_choice is from the list
+                tp_choices = []
+                if feature_choice:
+                    try:
+                        # Check if it's a valid feature choice (format: "id. name")
+                        if "." in feature_choice and feature_choice.split(".")[0].isdigit():
+                            # Valid format, get test point choices
+                            tp_choices = get_test_point_choices(global_data, feature_choice)
+                    except (ValueError, IndexError, KeyError):
+                        # Custom input or error, return empty choices
+                        tp_choices = []
+                
+                # Fill feature description if it's from the list
+                feature_text = ""
+                if feature_choice:
+                    try:
+                        # Check if it's a valid feature choice (format: "id. name")
+                        if "." in feature_choice and feature_choice.split(".")[0].isdigit():
+                            feature_id = int(feature_choice.split(".")[0])
+                            feature_idx = feature_id - 1
+                            if 0 <= feature_idx < len(global_data.get("features", [])):
+                                feature = global_data["features"][feature_idx]
+                                feature_text = f"{feature.get('name', '')}: {feature.get('description', '')}"
+                        else:
+                            # Custom input, use as is
+                            feature_text = feature_choice
+                    except (ValueError, IndexError):
+                        # Custom input, use as is
+                        feature_text = feature_choice
+                
+                return gr.Dropdown(choices=tp_choices), feature_text
+            
+            def on_ui_testpoint_dropdown_change(global_data, feature_choice, tp_choice):
+                """Handle test point dropdown change - update test case name dropdown and fill test point text"""
+                # Update test case name dropdown choices - only if both are from the list
+                tc_choices = []
+                if feature_choice and tp_choice:
+                    try:
+                        # Check if both are valid choices (format: "id. name")
+                        if ("." in feature_choice and feature_choice.split(".")[0].isdigit() and 
+                            "." in tp_choice and tp_choice.split(".")[0].isdigit()):
+                            # Valid format, get test case name choices
+                            tc_choices = get_test_case_name_choices(global_data, feature_choice, tp_choice)
+                    except (ValueError, IndexError, KeyError):
+                        # Custom input or error, return empty choices
+                        tc_choices = []
+                
+                # Fill test point description if it's from the list
+                tp_text = ""
+                if tp_choice:
+                    try:
+                        # Check if it's a valid test point choice (format: "id. name")
+                        if ("." in tp_choice and tp_choice.split(".")[0].isdigit() and 
+                            feature_choice and "." in feature_choice and feature_choice.split(".")[0].isdigit()):
+                            feature_id = int(feature_choice.split(".")[0])
+                            tp_id = int(tp_choice.split(".")[0])
+                            feature_idx = feature_id - 1
+                            tp_idx = tp_id - 1
+                            if feature_idx in global_data.get("test_points", {}):
+                                tps = global_data["test_points"][feature_idx]
+                                if 0 <= tp_idx < len(tps):
+                                    tp = tps[tp_idx]
+                                    tp_text = f"{tp.get('name', '')}: {tp.get('description', '')}"
+                                else:
+                                    # Custom input, use as is
+                                    tp_text = tp_choice
+                            else:
+                                # Custom input, use as is
+                                tp_text = tp_choice
+                        else:
+                            # Custom input, use as is
+                            tp_text = tp_choice
+                    except (ValueError, IndexError, KeyError):
+                        # Custom input, use as is
+                        tp_text = tp_choice
+                
+                return gr.Dropdown(choices=tc_choices), tp_text
+            
+            def on_ui_testcase_name_dropdown_change(global_data, feature_choice, tp_choice, tc_choice):
+                """Handle test case name dropdown change - fill test case name"""
+                tc_name = ""
+                if tc_choice:
+                    # If it's from the list (format: "case_id: title"), extract title
+                    if ":" in tc_choice:
+                        tc_name = tc_choice.split(":", 1)[1].strip()
+                    else:
+                        # Custom input or just title, use as is
+                        tc_name = tc_choice
+                return tc_name
+            
+            # Update feature dropdown choices when features are generated
+            def update_ui_feature_dropdown(global_data):
+                choices = get_feature_choices_list(global_data)
+                return gr.Dropdown(choices=choices)
+            
+            # When feature dropdown changes, update test point dropdown
+            ui_feature_dropdown.change(
+                fn=partial(on_ui_feature_dropdown_change, global_data),
+                inputs=ui_feature_dropdown,
+                outputs=[ui_testpoint_dropdown, ui_feature_input]
+            )
+            
+            # When test point dropdown changes, update test case name dropdown
+            ui_testpoint_dropdown.change(
+                fn=partial(on_ui_testpoint_dropdown_change, global_data),
+                inputs=[ui_feature_dropdown, ui_testpoint_dropdown],
+                outputs=[ui_testcase_name_dropdown, ui_testpoint_input]
+            )
+            
+            # When test case name dropdown changes, fill the name
+            ui_testcase_name_dropdown.change(
+                fn=partial(on_ui_testcase_name_dropdown_change, global_data),
+                inputs=[ui_feature_dropdown, ui_testpoint_dropdown, ui_testcase_name_dropdown],
+                outputs=ui_testcase_name_input
+            )
+            
+            # Also update feature dropdown when features are generated in Step 1
+            # This will be handled by updating the feature generation handlers later
 
         # Step 4: Data Export
         with gr.Tab("💾 Data Export"):
@@ -1080,6 +1307,13 @@ def init_gradio_page():
                 outputs=[save_status, visualization_output, labeling_output, export_output]
             )
 
+        # Document upload event bindings
+        doc_upload.upload(
+            fn=handle_file_upload,
+            inputs=doc_upload,
+            outputs=[uploaded_doc_dropdown, doc_preview, prd_doc_dropdown, prd_doc_preview]
+        )
+
         # Event handlers for generation
         def generate_features_handler(backend, source_mode, doc_choice, rag_content, requirement):
             # Get PRD text based on source mode
@@ -1091,51 +1325,61 @@ def init_gradio_page():
                         global_data["document_id"] = doc_id
                         global_data["document_display_name"] = doc_info["display_name"]
                     else:
-                        yield "⚠️ Document not found", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                        yield "⚠️ Document not found", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), ""
                         return
                 else:
-                    yield "⚠️ Please select a document", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                    yield "⚠️ Please select a document", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), ""
                     return
             else:  # RAG Mode
                 if not rag_content or not rag_content.strip():
-                    yield "⚠️ Please search and retrieve content first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                    yield "⚠️ Please search and retrieve content first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), ""
                     return
                 prd_text = rag_content
                 global_data["document_id"] = "rag_retrieved"
                 global_data["document_display_name"] = "RAG Retrieved Content"
 
             if not prd_text or not prd_text.strip():
-                yield "⚠️ PRD content is empty", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                yield "⚠️ PRD content is empty", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), ""
                 return
 
             if backend == "vLLM (Streaming)":
                 client = MODEL_CONFIG["vllm"]["client"]
                 model_id = MODEL_CONFIG["vllm"]["model_id"]
                 if not client:
-                    yield "⚠️ Please initialize vLLM first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                    choices = get_feature_choices_list(global_data)
+                    yield "⚠️ Please initialize vLLM first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), gr.Dropdown(choices=choices), ""
                     return
                 for output in generate_features_for_gradio_stream(
                     global_data, client, model_id, prd_text, requirement
                 ):
-                    yield output
+                    # output is a tuple: (feature_output, feature_thinking, feature_dropdown, feature_dropdown2)
+                    # Add ui_feature_dropdown update and ui_prd_input (from global_data["prd_text"])
+                    choices = get_feature_choices_list(global_data)
+                    prd_content = global_data.get("prd_text", "")
+                    yield output[0], output[1], output[2], output[3], gr.Dropdown(choices=choices), prd_content
             else:
                 llm = MODEL_CONFIG["ollama"]["llm"]
                 if not llm:
-                    yield "⚠️ Please initialize Ollama first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[])
+                    choices = get_feature_choices_list(global_data)
+                    yield "⚠️ Please initialize Ollama first", "", gr.Dropdown(choices=[]), gr.Dropdown(choices=[]), gr.Dropdown(choices=choices), ""
                     return
                 result = generate_features_for_gradio(global_data, llm, prd_text, requirement)
-                yield result
+                # result is a tuple: (feature_output, feature_thinking, feature_dropdown, feature_dropdown2)
+                # Add ui_feature_dropdown update and ui_prd_input (from global_data["prd_text"])
+                choices = get_feature_choices_list(global_data)
+                prd_content = global_data.get("prd_text", "")
+                yield result[0], result[1], result[2], result[3], gr.Dropdown(choices=choices), prd_content
 
         gen_feature_btn.click(
             fn=generate_features_handler,
             inputs=[model_backend, prd_source_mode, prd_doc_dropdown, rag_content_preview, feature_requirement],
-            outputs=[feature_output, feature_thinking, feature_dropdown, feature_dropdown2]
+            outputs=[feature_output, feature_thinking, feature_dropdown, feature_dropdown2, ui_feature_dropdown, ui_prd_input]
         )
 
         re_gen_feature_btn.click(
             fn=generate_features_handler,
             inputs=[model_backend, prd_source_mode, prd_doc_dropdown, rag_content_preview, feature_requirement],
-            outputs=[feature_output, feature_thinking, feature_dropdown, feature_dropdown2]
+            outputs=[feature_output, feature_thinking, feature_dropdown, feature_dropdown2, ui_feature_dropdown, ui_prd_input]
         )
 
         def generate_test_points_handler(backend, feature_choice, requirement, current_feature_step3):
@@ -1203,10 +1447,11 @@ def init_gradio_page():
         )
 
         # UI Automation Test Case Generation Handlers
-        def generate_ui_automation_handler(backend, prd_text, feature_text, tp_text, tc_name,
+        def generate_ui_automation_handler(backend, prd_text, feature_dropdown_val, feature_text, 
+                                          tp_dropdown_val, tp_text, tc_dropdown_val, tc_name,
                                           use_rag, rag_topk, jsonl_path, additional_req):
             """Handler for UI automation test case generation"""
-            # Use current PRD if not provided
+            # Get PRD text - use input text, fallback to global_data
             if not prd_text or not prd_text.strip():
                 prd_text = global_data.get("prd_text", "")
             
@@ -1214,13 +1459,64 @@ def init_gradio_page():
                 yield "⚠️ Please provide PRD document content", "", "", "", ""
                 return
             
-            if not feature_text or not feature_text.strip():
+            # Get feature text - prefer dropdown selection, fallback to text input
+            if feature_dropdown_val and feature_dropdown_val.strip():
+                # Check if it's a valid feature choice (format: "id. name")
+                try:
+                    if "." in feature_dropdown_val and feature_dropdown_val.split(".")[0].isdigit():
+                        feature_id = int(feature_dropdown_val.split(".")[0])
+                        feature_idx = feature_id - 1
+                        if 0 <= feature_idx < len(global_data.get("features", [])):
+                            feature = global_data["features"][feature_idx]
+                            feature_text = f"{feature.get('name', '')}: {feature.get('description', '')}"
+                        else:
+                            feature_text = feature_dropdown_val
+                    else:
+                        # Custom input, use as is
+                        feature_text = feature_dropdown_val
+                except (ValueError, IndexError):
+                    feature_text = feature_dropdown_val
+            elif not feature_text or not feature_text.strip():
                 yield "⚠️ Please provide feature description", "", "", "", ""
                 return
             
-            if not tp_text or not tp_text.strip():
+            # Get test point text - prefer dropdown selection, fallback to text input
+            if tp_dropdown_val and tp_dropdown_val.strip():
+                # Check if it's a valid test point choice (format: "id. name")
+                try:
+                    if "." in tp_dropdown_val and tp_dropdown_val.split(".")[0].isdigit() and feature_dropdown_val and "." in feature_dropdown_val:
+                        feature_id = int(feature_dropdown_val.split(".")[0])
+                        tp_id = int(tp_dropdown_val.split(".")[0])
+                        feature_idx = feature_id - 1
+                        tp_idx = tp_id - 1
+                        if feature_idx in global_data.get("test_points", {}):
+                            tps = global_data["test_points"][feature_idx]
+                            if 0 <= tp_idx < len(tps):
+                                tp = tps[tp_idx]
+                                tp_text = f"{tp.get('name', '')}: {tp.get('description', '')}"
+                            else:
+                                tp_text = tp_dropdown_val
+                        else:
+                            tp_text = tp_dropdown_val
+                    else:
+                        # Custom input, use as is
+                        tp_text = tp_dropdown_val
+                except (ValueError, IndexError, KeyError):
+                    tp_text = tp_dropdown_val
+            elif not tp_text or not tp_text.strip():
                 yield "⚠️ Please provide test point description", "", "", "", ""
                 return
+            
+            # Get test case name - prefer dropdown selection, fallback to text input
+            if tc_dropdown_val and tc_dropdown_val.strip():
+                # If it's from the list (format: "case_id: title"), extract title
+                if ":" in tc_dropdown_val:
+                    tc_name = tc_dropdown_val.split(":", 1)[1].strip()
+                else:
+                    # Custom input or just title, use as is
+                    tc_name = tc_dropdown_val
+            elif not tc_name:
+                tc_name = ""  # Test case name is optional
             
             # First, retrieve and show RAG examples if enabled
             rag_status = ""
@@ -1283,14 +1579,16 @@ def init_gradio_page():
 
         gen_ui_auto_btn.click(
             fn=generate_ui_automation_handler,
-            inputs=[model_backend, ui_prd_input, ui_feature_input, ui_testpoint_input, ui_testcase_name_input,
+            inputs=[model_backend, ui_prd_input, ui_feature_dropdown, ui_feature_input, 
+                   ui_testpoint_dropdown, ui_testpoint_input, ui_testcase_name_dropdown, ui_testcase_name_input,
                    ui_use_rag, ui_rag_topk, ui_jsonl_path, ui_additional_req],
             outputs=[ui_auto_output, ui_auto_thinking, ui_auto_json, ui_rag_status, ui_rag_preview]
         )
 
         regen_ui_auto_btn.click(
             fn=generate_ui_automation_handler,
-            inputs=[model_backend, ui_prd_input, ui_feature_input, ui_testpoint_input, ui_testcase_name_input,
+            inputs=[model_backend, ui_prd_input, ui_feature_dropdown, ui_feature_input,
+                   ui_testpoint_dropdown, ui_testpoint_input, ui_testcase_name_dropdown, ui_testcase_name_input,
                    ui_use_rag, ui_rag_topk, ui_jsonl_path, ui_additional_req],
             outputs=[ui_auto_output, ui_auto_thinking, ui_auto_json, ui_rag_status, ui_rag_preview]
         )
