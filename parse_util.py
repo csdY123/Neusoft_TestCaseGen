@@ -7,13 +7,24 @@ def robust_json_parse(text):
     鲁棒的JSON解析函数，尝试多种策略提取JSON内容
 
     策略：
-    1. 提取 ```json ... ``` 代码块
-    2. 提取第一个完整的 {...} 或 [...] 对象
-    3. 清理文本中的常见问题（多余的逗号、注释等）
-    4. 使用正则表达式定位JSON边界
+    1. 移除思考标签（如 <think>...</think>）
+    2. 提取 ```json ... ``` 代码块
+    3. 提取第一个完整的 {...} 或 [...] 对象
+    4. 清理文本中的常见问题（多余的逗号、注释等）
+    5. 使用正则表达式定位JSON边界
     """
     if not text or not text.strip():
         raise ValueError("输入文本为空")
+    
+    # Pre-processing: Remove thinking tags and special tokens (e.g., Qwen3 format)
+    # Remove <think>...</think> tags
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # Remove other special tokens like <|...|>
+    text = re.sub(r'<\|.*?\|>', '', text, flags=re.DOTALL)
+    # Remove <think>...</think> tags (if any)
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # Remove <reasoning>...</reasoning> tags (if any)
+    text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL)
 
     # 策略1: 尝试提取 ```json ... ``` 代码块
     json_code_block_pattern = r'```json\s*([\s\S]*?)\s*```'

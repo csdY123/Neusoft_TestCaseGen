@@ -2,10 +2,11 @@
 
 每个测试步骤应遵循以下格式：
 - step: 步骤序号，从0开始
-- action: 动作类型，必须是以下之一：CLICK, SCROLL, TEXT, COMPLETE
+- action: 动作类型，必须是以下之一：CLICK, SCROLL, TEXT, WAIT, COMPLETE
   - CLICK: 点击UI元素
   - SCROLL: 滑动屏幕（如从底部向上滑动、从右向左滑动等）
   - TEXT: 在输入框中输入文本
+  - WAIT: 等待操作（如等待页面加载、数据加载、网络请求完成等，需在instruction中指定等待时间，如"等待5秒"）
   - COMPLETE: 表示任务完成（始终是最后一步）
 - instruction: 对该步骤操作的清晰描述
 
@@ -14,9 +15,10 @@
 2. 包含所有必要的导航步骤（打开应用、点击菜单等）
 3. 当需要查找当前屏幕上不可见的元素时使用SCROLL
 4. 当需要输入搜索查询或填写表单时使用TEXT
-5. 始终以COMPLETE步骤结束，instruction为"任务执行成功"
-6. 指令描述要清晰具体（包括按钮名称、元素位置等）
-7. 适当考虑错误处理和边界情况
+5. 当需要等待页面加载、数据加载、网络请求完成或界面响应时使用WAIT，并在instruction中明确指定等待时间（如"等待5秒"、"等待10秒"等）
+6. 始终以COMPLETE步骤结束，instruction为"任务执行成功"
+7. 指令描述要清晰具体（包括按钮名称、元素位置等）
+8. 适当考虑错误处理和边界情况
 
 输出格式：仅返回有效的JSON数组，不要包含其他文本。
 
@@ -26,6 +28,7 @@
   {"step": 1, "action": "CLICK", "instruction": "点击搜索框"},
   {"step": 2, "action": "TEXT", "instruction": "输入grocery store"},
   {"step": 3, "action": "CLICK", "instruction": "点击搜索按钮"},
-  {"step": 4, "action": "CLICK", "instruction": "点击列表第1条结果"},
-  {"step": 5, "action": "COMPLETE", "instruction": "任务执行成功"}
+  {"step": 4, "action": "WAIT", "instruction": "等待5秒"},
+  {"step": 5, "action": "CLICK", "instruction": "点击列表第1条结果"},
+  {"step": 6, "action": "COMPLETE", "instruction": "任务执行成功"}
 ]

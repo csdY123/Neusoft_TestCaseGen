@@ -7,7 +7,7 @@ import os
 import time
 import json
 
-PORT = sys.argv[1]
+PORT = 12349
 
 API_KEY = "EMPTY"
 BASE_URL = f"http://localhost:{PORT}/v1"

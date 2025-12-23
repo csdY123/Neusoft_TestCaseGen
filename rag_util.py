@@ -1001,39 +1001,70 @@ _jsonl_vectorstore = {}
 
 
 def load_jsonl_data(jsonl_path: str) -> List[Dict[str, Any]]:
-    """Load JSONL file and cache the data"""
+    """Load JSONL file(s) and cache the data. Supports both single file and directory."""
     global _jsonl_data_cache
     
     if jsonl_path in _jsonl_data_cache:
         return _jsonl_data_cache[jsonl_path]
     
     if not os.path.exists(jsonl_path):
-        logger.warning(f"JSONL file not found: {jsonl_path}")
+        logger.warning(f"JSONL path not found: {jsonl_path}")
         return []
     
     data = []
-    try:
-        with open(jsonl_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        item = json.loads(line)
-                        data.append(item)
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse line: {e}")
-                        continue
-        _jsonl_data_cache[jsonl_path] = data
-        logger.info(f"Loaded {len(data)} items from {jsonl_path}")
-    except Exception as e:
-        logger.error(f"Failed to load JSONL: {e}")
-        return []
     
+    # Check if path is a directory or a file
+    if os.path.isdir(jsonl_path):
+        # Load all JSONL files from directory
+        jsonl_files = [f for f in os.listdir(jsonl_path) if f.endswith('.jsonl')]
+        if not jsonl_files:
+            logger.warning(f"No JSONL files found in directory: {jsonl_path}")
+            return []
+        
+        logger.info(f"Found {len(jsonl_files)} JSONL files in directory: {jsonl_path}")
+        for jsonl_file in sorted(jsonl_files):
+            file_path = os.path.join(jsonl_path, jsonl_file)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_data_count = 0
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                item = json.loads(line)
+                                data.append(item)
+                                file_data_count += 1
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse line in {file_path}: {e}")
+                                continue
+                    logger.info(f"Loaded {file_data_count} items from {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to load JSONL file {file_path}: {e}")
+                continue
+    else:
+        # Load single file
+        try:
+            with open(jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            item = json.loads(line)
+                            data.append(item)
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse line: {e}")
+                            continue
+        except Exception as e:
+            logger.error(f"Failed to load JSONL: {e}")
+            return []
+    
+    _jsonl_data_cache[jsonl_path] = data
+    logger.info(f"Total loaded {len(data)} items from {jsonl_path}")
     return data
 
 
 def build_jsonl_index(jsonl_path: str, index_name: str = "jsonl_index") -> bool:
-    """Build FAISS index from JSONL file for RAG retrieval"""
+    """Build FAISS index from JSONL file(s) for RAG retrieval. Supports both single file and directory."""
     global _jsonl_vectorstore
     
     data = load_jsonl_data(jsonl_path)
@@ -1070,7 +1101,8 @@ def build_jsonl_index(jsonl_path: str, index_name: str = "jsonl_index") -> bool:
     vectorstore = FAISS.from_documents(documents, embeddings)
     _jsonl_vectorstore[index_name] = vectorstore
     
-    logger.info(f"Built JSONL index with {len(documents)} documents")
+    path_type = "directory" if os.path.isdir(jsonl_path) else "file"
+    logger.info(f"Built JSONL index with {len(documents)} documents from {path_type}: {jsonl_path}")
     return True
 
 
@@ -1081,7 +1113,8 @@ def retrieve_jsonl_examples(
     index_name: str = "jsonl_index"
 ) -> List[Dict[str, Any]]:
     """
-    Retrieve similar examples from JSONL file using RAG.
+    Retrieve similar examples from JSONL file(s) using RAG.
+    Supports both single file and directory (loads all .jsonl files from directory).
     Returns full JSONL entries (including steps) for few-shot learning.
     """
     global _jsonl_vectorstore
@@ -1141,11 +1174,13 @@ def format_jsonl_examples_for_prompt(examples: List[Dict[str, Any]]) -> str:
 
 
 def get_jsonl_index_stats(jsonl_path: str) -> Dict[str, Any]:
-    """Get statistics about JSONL data"""
+    """Get statistics about JSONL data. Supports both single file and directory."""
     data = load_jsonl_data(jsonl_path)
+    path_type = "directory" if os.path.isdir(jsonl_path) else "file"
     return {
         "exists": len(data) > 0,
         "num_examples": len(data),
-        "path": jsonl_path
+        "path": jsonl_path,
+        "type": path_type
     }
 

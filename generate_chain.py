@@ -101,7 +101,7 @@ def parse_features(response, prd_text=""):
 
         return output, "✅ Generation complete", features, features_choices
     except Exception as e:
-        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response[:500]}{'...' if len(str(response)) > 500 else ''}\n```"
+        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response}\n```"
         return error_msg, f"Error: {str(e)}", [], []
 
 
@@ -250,7 +250,7 @@ def parse_test_points(feature, response):
         return output, "✅ Generation complete", test_points
 
     except Exception as e:
-        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response[:500]}{'...' if len(str(response)) > 500 else ''}\n```"
+        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response}\n```"
         return error_msg, f"Error: {str(e)}", []
 
 
@@ -411,7 +411,7 @@ def parse_test_cases(response, feature, test_point):
         return output, "✅ Generation complete", test_cases
 
     except Exception as e:
-        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response[:500]}{'...' if len(str(response)) > 500 else ''}\n```"
+        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response}\n```"
         return error_msg, f"Error: {str(e)}", []
 
 # >>>>>>>> Test Case Generation End <<<<<<<<
@@ -419,8 +419,8 @@ def parse_test_cases(response, feature, test_point):
 
 # >>>>>>>> UI Automation Test Case Generation Start <<<<<<<<
 
-# Default path for JSONL knowledge base
-DEFAULT_JSONL_PATH = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_eval_data.jsonl"
+# Default path for JSONL knowledge base (directory containing all JSONL files)
+DEFAULT_JSONL_PATH = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl"
 
 
 def generate_ui_automation_for_gradio(global_data: dict, llm,
@@ -562,6 +562,7 @@ def generate_ui_automation_steps(llm, prd_text: str, feature_text: str, test_poi
 def parse_ui_automation_steps(response: str):
     """Parse UI automation steps from response"""
     try:
+        print(f"response: {response}")
         # Try to parse as JSON array directly
         result = robust_json_parse(response)
 
@@ -617,7 +618,7 @@ def parse_ui_automation_steps(response: str):
         return output, "✅ Generation complete", validated_steps
 
     except Exception as e:
-        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response[:1000]}{'...' if len(str(response)) > 1000 else ''}\n```"
+        error_msg = f"⚠️ Parse failed\n\n**Error:** {str(e)}\n\n**Raw output:**\n```\n{response}\n```"
         return error_msg, f"Error: {str(e)}", []
 
 
