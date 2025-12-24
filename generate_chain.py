@@ -320,13 +320,13 @@ def generate_test_cases_for_gradio_stream(global_data: dict, vllm_client: OpenAI
     system_prompt = load_prompt_template(system_prompt_name)
     user_prompt_template = load_prompt_template(user_prompt_name)
     user_prompt = user_prompt_template.format(
-        feature_name=feature["name"],
-        test_point_name=test_point["name"],
-        test_point_description=test_point["description"],
-        test_point_type=test_point["type"],
-        test_point_priority=test_point["priority"],
-        test_point_precondition=test_point["precondition"],
-        test_point_expected_result=test_point["expected_result"],
+        feature_name=feature.get("name", ""),
+        test_point_name=test_point.get("name", ""),
+        test_point_description=test_point.get("description", ""),
+        test_point_type=test_point.get("type", ""),
+        test_point_priority=test_point.get("priority", ""),
+        test_point_precondition=test_point.get("precondition", ""),
+        test_point_expected_result=test_point.get("expected_result", ""),
         prd_text=global_data['prd_text']
     )
 
@@ -353,12 +353,13 @@ def generate_test_cases(llm, prd_text, feature, test_point, additional_requireme
                         use_vllm=False, vllm_client=None, model_id=None):
     system_prompt = load_prompt_template(system_prompt_name)
     user_prompt_template = load_prompt_template(user_prompt_name)
-    user_prompt = user_prompt_template.format(feature_name=feature["name"], test_point_name=test_point["name"],
-                                              test_point_description=test_point["description"],
-                                              test_point_type=test_point["type"],
-                                              test_point_priority=test_point["priority"],
-                                              test_point_precondition=test_point["precondition"],
-                                              test_point_expected_result=test_point["expected_result"],
+    user_prompt = user_prompt_template.format(feature_name=feature.get("name", ""), 
+                                              test_point_name=test_point.get("name", ""),
+                                              test_point_description=test_point.get("description", ""),
+                                              test_point_type=test_point.get("type", ""),
+                                              test_point_priority=test_point.get("priority", ""),
+                                              test_point_precondition=test_point.get("precondition", ""),
+                                              test_point_expected_result=test_point.get("expected_result", ""),
                                               prd_text=prd_text)
 
     if additional_requirement:
