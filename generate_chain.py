@@ -421,7 +421,7 @@ def parse_test_cases(response, feature, test_point):
 # >>>>>>>> UI Automation Test Case Generation Start <<<<<<<<
 
 # Default path for JSONL knowledge base (directory containing all JSONL files)
-DEFAULT_JSONL_PATH = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl"
+DEFAULT_JSONL_PATH = "update_jsonl"
 
 
 def generate_ui_automation_for_gradio(global_data: dict, llm,

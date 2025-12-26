@@ -244,7 +244,10 @@ def batch_test_jsonl(input_jsonl_path, output_jsonl_path=None, backend="vLLM (St
                 "rag_topk": rag_topk,
                 "jsonl_path": jsonl_path or "",
                 "additional_req": additional_req,
-                "api_name": "/generate_ui_automation_handler"
+                "api_name": "/generate_ui_automation_handler",
+                "feature_dropdown_val":"",
+                "tp_dropdown_val":"",
+                "tc_dropdown_val":"",
             }
             
             try:
@@ -303,8 +306,8 @@ if __name__ == "__main__":
     # Check if batch mode
     if len(sys.argv) > 1 and sys.argv[1] == "batch":
         # Batch mode: process jsonl file
-        input_path = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/original_data/ai4test_neusoft_eval_data_30.jsonl"
-        output_path = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/original_data/ai4test_neusoft_eval_data_30_with_pred.jsonl"
+        input_path = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/original_data/ai4test_gui_agent_eval_data_30.jsonl"
+        output_path = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/original_data/ai4test_gui_agent_eval_data_30_pred.jsonl"
         
         batch_test_jsonl(
             input_jsonl_path=input_path,
