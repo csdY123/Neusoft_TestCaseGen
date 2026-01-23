@@ -62,9 +62,9 @@ def split_jsonl(input_file: str, output_file_30: str, output_file_70: str, seed:
 
 if __name__ == "__main__":
     # File paths
-    input_file = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_neusoft_eval_data.jsonl"
-    output_file_30 = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_neusoft_eval_data_30.jsonl"
-    output_file_70 = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_neusoft_eval_data_70.jsonl"
+    input_file = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_gui_agent_eval_data.jsonl"
+    output_file_30 = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_gui_agent_eval_data_30.jsonl"
+    output_file_70 = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/update_jsonl/ai4test_gui_agent_eval_data_70.jsonl"
     
     split_jsonl(input_file, output_file_30, output_file_70)
 

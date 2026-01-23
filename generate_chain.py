@@ -8,6 +8,9 @@ from parse_util import robust_json_parse
 from prompt_util import load_prompt_template
 from rag_util import retrieve_jsonl_examples, format_jsonl_examples_for_prompt
 
+# Default path for JSONL knowledge base (directory containing all JSONL files)
+DEFAULT_JSONL_PATH = "update_jsonl"
+
 
 # >>>>>>>> Feature Generation Start <<<<<<<<
 def generate_features_for_gradio(global_data: dict, llm, prd_text, additional_requirement="",
@@ -259,8 +262,9 @@ def parse_test_points(feature, response):
 # >>>>>>>> Test Case Generation Start <<<<<<<<
 def generate_test_cases_for_gradio(global_data: dict, llm,
                                    feature_choice, tp_choice, additional_requirement,
-                                   use_vllm=False, vllm_client=None, model_id=None):
-    """Generate test cases for selected test point"""
+                                   use_vllm=False, vllm_client=None, model_id=None,
+                                   use_rag=False, rag_top_k=3, jsonl_path=None):
+    """Generate test cases for selected test point with optional RAG support"""
 
     if not feature_choice or not tp_choice:
         return "⚠️ Please select feature and test point", ""
@@ -282,7 +286,8 @@ def generate_test_cases_for_gradio(global_data: dict, llm,
 
     output, thinking, test_cases = generate_test_cases(
         llm, global_data['prd_text'], feature, test_point, additional_requirement,
-        use_vllm=use_vllm, vllm_client=vllm_client, model_id=model_id
+        use_vllm=use_vllm, vllm_client=vllm_client, model_id=model_id,
+        use_rag=use_rag, rag_top_k=rag_top_k, jsonl_path=jsonl_path
     )
 
     global_data["test_cases"][(feature_idx, test_point_idx)] = test_cases
@@ -293,8 +298,14 @@ def generate_test_cases_for_gradio(global_data: dict, llm,
 def generate_test_cases_for_gradio_stream(global_data: dict, vllm_client: OpenAI, model_id: str,
                                           feature_choice, tp_choice, additional_requirement,
                                           system_prompt_name="generate_test_cases_system_prompt",
-                                          user_prompt_name="generate_test_cases_user_prompt"):
-    """Generate test cases with streaming output for Gradio"""
+                                          user_prompt_name="generate_test_cases_user_prompt",
+                                          use_rag=False, rag_examples_text=None):
+    """Generate test cases with streaming output for Gradio
+    
+    Args:
+        use_rag: Whether to use RAG (if rag_examples_text is provided, this is ignored)
+        rag_examples_text: Pre-retrieved RAG examples text. If provided, skip internal RAG retrieval.
+    """
     if not feature_choice or not tp_choice:
         yield "⚠️ Please select feature and test point", ""
         return
@@ -319,6 +330,10 @@ def generate_test_cases_for_gradio_stream(global_data: dict, vllm_client: OpenAI
 
     system_prompt = load_prompt_template(system_prompt_name)
     user_prompt_template = load_prompt_template(user_prompt_name)
+    
+    # Prepare RAG examples text
+    rag_text = rag_examples_text if rag_examples_text else ""
+    
     user_prompt = user_prompt_template.format(
         feature_name=feature.get("name", ""),
         test_point_name=test_point.get("name", ""),
@@ -327,7 +342,8 @@ def generate_test_cases_for_gradio_stream(global_data: dict, vllm_client: OpenAI
         test_point_priority=test_point.get("priority", ""),
         test_point_precondition=test_point.get("precondition", ""),
         test_point_expected_result=test_point.get("expected_result", ""),
-        prd_text=global_data['prd_text']
+        prd_text=global_data['prd_text'],
+        rag_examples=rag_text
     )
 
     if additional_requirement:
@@ -350,17 +366,32 @@ def generate_test_cases_for_gradio_stream(global_data: dict, vllm_client: OpenAI
 def generate_test_cases(llm, prd_text, feature, test_point, additional_requirement="",
                         system_prompt_name="generate_test_cases_system_prompt",
                         user_prompt_name="generate_test_cases_user_prompt",
-                        use_vllm=False, vllm_client=None, model_id=None):
+                        use_vllm=False, vllm_client=None, model_id=None,
+                        use_rag=False, rag_top_k=3, jsonl_path=None):
+    """Generate test cases with optional RAG support"""
     system_prompt = load_prompt_template(system_prompt_name)
     user_prompt_template = load_prompt_template(user_prompt_name)
-    user_prompt = user_prompt_template.format(feature_name=feature.get("name", ""), 
-                                              test_point_name=test_point.get("name", ""),
-                                              test_point_description=test_point.get("description", ""),
-                                              test_point_type=test_point.get("type", ""),
-                                              test_point_priority=test_point.get("priority", ""),
-                                              test_point_precondition=test_point.get("precondition", ""),
-                                              test_point_expected_result=test_point.get("expected_result", ""),
-                                              prd_text=prd_text)
+    
+    # Retrieve RAG examples if enabled
+    rag_examples_text = ""
+    if use_rag:
+        jsonl_file = jsonl_path or DEFAULT_JSONL_PATH
+        query = f"{feature.get('name', '')} {test_point.get('name', '')} {test_point.get('description', '')}"
+        examples = retrieve_jsonl_examples(query, jsonl_file, top_k=rag_top_k)
+        if examples:
+            rag_examples_text = format_jsonl_examples_for_prompt(examples)
+    
+    user_prompt = user_prompt_template.format(
+        feature_name=feature.get("name", ""), 
+        test_point_name=test_point.get("name", ""),
+        test_point_description=test_point.get("description", ""),
+        test_point_type=test_point.get("type", ""),
+        test_point_priority=test_point.get("priority", ""),
+        test_point_precondition=test_point.get("precondition", ""),
+        test_point_expected_result=test_point.get("expected_result", ""),
+        prd_text=prd_text,
+        rag_examples=rag_examples_text
+    )
 
     if additional_requirement:
         user_prompt += f"\n\nAdditional requirement: {additional_requirement}"
@@ -419,9 +450,6 @@ def parse_test_cases(response, feature, test_point):
 
 
 # >>>>>>>> UI Automation Test Case Generation Start <<<<<<<<
-
-# Default path for JSONL knowledge base (directory containing all JSONL files)
-DEFAULT_JSONL_PATH = "update_jsonl"
 
 
 def generate_ui_automation_for_gradio(global_data: dict, llm,

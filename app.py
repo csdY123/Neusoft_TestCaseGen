@@ -551,6 +551,18 @@ def init_gradio_page():
                             placeholder="Enter keywords or questions to search PRD knowledge base...",
                             lines=2
                         )
+                        rag_search_scope = gr.Radio(
+                            label="Search Scope",
+                            choices=["🌐 All Knowledge Base", "📄 Specific Document"],
+                            value="🌐 All Knowledge Base"
+                        )
+                        rag_doc_dropdown = gr.Dropdown(
+                            label="Select Document to Search",
+                            choices=initial_choices,
+                            value=None,
+                            interactive=True,
+                            visible=False
+                        )
                         with gr.Row():
                             rag_top_k = gr.Slider(
                                 minimum=1, maximum=20, step=1, value=7,
@@ -624,28 +636,71 @@ def init_gradio_page():
                 outputs=[doc_mode_col, rag_mode_col]
             )
             
+            # RAG Search Scope Toggle
+            def toggle_rag_search_scope(scope):
+                if scope == "📄 Specific Document":
+                    return gr.Dropdown(visible=True)
+                else:
+                    return gr.Dropdown(visible=False)
+            
+            rag_search_scope.change(
+                fn=toggle_rag_search_scope,
+                inputs=rag_search_scope,
+                outputs=rag_doc_dropdown
+            )
+            
+            # Update RAG document dropdown when documents change
+            def update_rag_doc_dropdown():
+                choices = get_document_choices()
+                return gr.Dropdown(choices=choices)
+            
             # RAG Search Handler
-            def rag_search_handler(query, top_k):
+            def rag_search_handler(query, top_k, scope, doc_choice):
                 if not query or not query.strip():
                     return "⚠️ Please enter a query", ""
                 
                 if not check_index_exists("faiss_index"):
                     return "❌ FAISS index not found. Please build index first.", ""
                 
+                # Check if specific document is selected
+                filter_doc_path = None
+                if scope == "📄 Specific Document":
+                    if not doc_choice:
+                        return "⚠️ Please select a document to search", ""
+                    doc_id, doc_info = get_document_by_display_name(doc_choice)
+                    if not doc_info:
+                        return "❌ Document not found", ""
+                    filter_doc_path = doc_info.get("path")
+                    if not filter_doc_path:
+                        return "❌ Document path not found", ""
+                
                 try:
-                    fragments = retrieve_knowledge(query, top_k=int(top_k), use_reranker=False)
+                    fragments = retrieve_knowledge(
+                        query, 
+                        top_k=int(top_k), 
+                        use_reranker=False,
+                        filter_by_doc_path=filter_doc_path
+                    )
                     if not fragments:
-                        return "⚠️ No results found", ""
+                        scope_msg = f" in selected document" if filter_doc_path else ""
+                        return f"⚠️ No results found{scope_msg}", ""
                     
+                    scope_msg = f" from selected document" if filter_doc_path else ""
                     content = format_retrieved_content(fragments, query)
-                    return f"✅ Retrieved {len(fragments)} fragments", content
+                    return f"✅ Retrieved {len(fragments)} fragments{scope_msg}", content
                 except Exception as e:
                     return f"❌ Error: {str(e)}", ""
             
             rag_search_btn.click(
                 fn=rag_search_handler,
-                inputs=[rag_query, rag_top_k],
+                inputs=[rag_query, rag_top_k, rag_search_scope, rag_doc_dropdown],
                 outputs=[rag_status, rag_content_preview]
+            )
+            
+            # Update RAG document dropdown when uploaded documents change
+            uploaded_doc_dropdown.change(
+                fn=update_rag_doc_dropdown,
+                outputs=rag_doc_dropdown
             )
 
         # Document upload event bindings (will be moved after all UI components are defined)
@@ -728,7 +783,7 @@ def init_gradio_page():
                 # Sub-tab 1: Traditional Test Cases
                 with gr.Tab("📋 Traditional Test Cases"):
                     with gr.Row():
-                        with gr.Column(scale=1):
+                        with gr.Column(scale=2):
                             feature_dropdown2 = gr.Dropdown(
                                 label="Select Feature",
                                 choices=[],
@@ -739,6 +794,35 @@ def init_gradio_page():
                                 choices=[],
                                 interactive=True
                             )
+                            
+                            # RAG settings for Traditional Test Cases
+                            with gr.Accordion("🔍 RAG Settings", open=True):
+                                tc_use_rag = gr.Checkbox(
+                                    label="Enable RAG (Retrieve similar test case examples)",
+                                    value=True
+                                )
+                                tc_rag_topk = gr.Slider(
+                                    minimum=1, maximum=5, step=1, value=3,
+                                    label="Number of Examples to Retrieve"
+                                )
+                                tc_jsonl_path = gr.Textbox(
+                                    label="JSONL Knowledge Base Path",
+                                    value=DEFAULT_JSONL_PATH,
+                                    lines=1
+                                )
+                                with gr.Row():
+                                    tc_preview_rag_btn = gr.Button("🔍 Preview RAG Results", variant="secondary")
+                                tc_rag_status = gr.Textbox(
+                                    label="RAG Status",
+                                    value="",
+                                    interactive=False,
+                                    lines=1
+                                )
+                                tc_rag_preview = gr.Markdown(
+                                    label="Retrieved Examples Preview",
+                                    value="*Click 'Preview RAG Results' to see retrieved examples*"
+                                )
+                            
                             test_case_requirement = gr.Textbox(
                                 label="Additional Requirements (Optional)",
                                 placeholder="E.g., Add exception scenario test cases...",
@@ -1274,7 +1358,7 @@ def init_gradio_page():
                             # Convert test_cases keys
                             for k, v in data.get("test_cases", {}).items():
                                 parts = k.split(",")
-                                if len(parts) == 2:
+                                if len(parts) == 2: 
                                     vis_data["test_cases"][(int(parts[0]), int(parts[1]))] = v
                             
                             vis = format_data_for_visualization(vis_data)
@@ -1415,35 +1499,162 @@ def init_gradio_page():
             outputs=[test_point_output, test_point_thinking, test_point_dropdown]
         )
 
-        def generate_test_cases_handler(backend, feature_choice, tp_choice, requirement):
+        # Preview RAG for Traditional Test Cases
+        def tc_preview_rag_handler(feature_choice, tp_choice, rag_topk, jsonl_path):
+            """Preview RAG retrieved examples for traditional test cases"""
+            # Extract feature text
+            feature_text = ""
+            if feature_choice:
+                try:
+                    if "." in feature_choice and feature_choice.split(".")[0].isdigit():
+                        feature_id = int(feature_choice.split(".")[0])
+                        feature_idx = feature_id - 1
+                        if 0 <= feature_idx < len(global_data.get("features", [])):
+                            feature = global_data["features"][feature_idx]
+                            feature_text = f"{feature.get('name', '')} {feature.get('description', '')}"
+                        else:
+                            feature_text = feature_choice
+                    else:
+                        feature_text = feature_choice
+                except (ValueError, IndexError):
+                    feature_text = feature_choice
+            
+            # Extract test point text
+            tp_text = ""
+            if tp_choice:
+                try:
+                    if "." in tp_choice and tp_choice.split(".")[0].isdigit() and feature_choice and "." in feature_choice:
+                        feature_id = int(feature_choice.split(".")[0])
+                        tp_id = int(tp_choice.split(".")[0])
+                        feature_idx = feature_id - 1
+                        tp_idx = tp_id - 1
+                        if feature_idx in global_data.get("test_points", {}):
+                            tps = global_data["test_points"][feature_idx]
+                            if 0 <= tp_idx < len(tps):
+                                tp = tps[tp_idx]
+                                tp_text = f"{tp.get('name', '')} {tp.get('description', '')}"
+                            else:
+                                tp_text = tp_choice
+                        else:
+                            tp_text = tp_choice
+                    else:
+                        tp_text = tp_choice
+                except (ValueError, IndexError, KeyError):
+                    tp_text = tp_choice
+            
+            if not feature_text and not tp_text:
+                return "⚠️ Please select feature and test point first", "*No query provided*"
+            
+            query = f"{feature_text} {tp_text}".strip()
+            if not query:
+                return "⚠️ Query is empty", "*No query provided*"
+            
+            try:
+                examples = retrieve_jsonl_examples(query, jsonl_path, top_k=int(rag_topk))
+                if not examples:
+                    return "⚠️ No examples found", "*No matching examples in knowledge base*"
+                
+                # Format for display
+                formatted = format_jsonl_examples_for_prompt(examples)
+                status = f"✅ Retrieved {len(examples)} examples"
+                return status, formatted
+            except Exception as e:
+                return f"❌ Error: {str(e)}", f"*Error retrieving examples: {str(e)}*"
+        
+        tc_preview_rag_btn.click(
+            fn=tc_preview_rag_handler,
+            inputs=[feature_dropdown2, test_point_dropdown, tc_rag_topk, tc_jsonl_path],
+            outputs=[tc_rag_status, tc_rag_preview]
+        )
+
+        def generate_test_cases_handler(backend, feature_choice, tp_choice, requirement,
+                                       use_rag, rag_topk, jsonl_path):
+            """Handler for test case generation with RAG support"""
+            if not feature_choice or not tp_choice:
+                yield "⚠️ Please select feature and test point", "", "", ""
+                return
+            
+            # Extract feature and test point info for RAG query
+            feature_text = ""
+            tp_text = ""
+            try:
+                feature_id = int(feature_choice.split(".")[0])
+                feature_idx = feature_id - 1
+                if 0 <= feature_idx < len(global_data.get("features", [])):
+                    feature = global_data["features"][feature_idx]
+                    feature_text = f"{feature.get('name', '')} {feature.get('description', '')}"
+                
+                tp_id = int(tp_choice.split(".")[0])
+                tp_idx = tp_id - 1
+                if feature_idx in global_data.get("test_points", {}):
+                    tps = global_data["test_points"][feature_idx]
+                    if 0 <= tp_idx < len(tps):
+                        tp = tps[tp_idx]
+                        tp_text = f"{tp.get('name', '')} {tp.get('description', '')}"
+            except (ValueError, IndexError, KeyError):
+                pass
+            
+            # First, retrieve and show RAG examples if enabled
+            rag_status = ""
+            rag_preview = ""
+            rag_examples_text = ""
+            if use_rag:
+                yield "🔍 Retrieving reference examples...", "", "🔄 Searching...", ""
+                query = f"{feature_text} {tp_text}".strip()
+                try:
+                    examples = retrieve_jsonl_examples(query, jsonl_path, top_k=int(rag_topk))
+                    if examples:
+                        rag_status = f"✅ Retrieved {len(examples)} reference examples"
+                        rag_preview = format_jsonl_examples_for_prompt(examples)
+                        rag_examples_text = rag_preview
+                    else:
+                        rag_status = "⚠️ No matching examples found"
+                        rag_preview = "*No matching examples in knowledge base*"
+                except Exception as e:
+                    rag_status = f"❌ RAG Error: {str(e)}"
+                    rag_preview = f"*Error: {str(e)}*"
+            else:
+                rag_status = "ℹ️ RAG disabled"
+                rag_preview = "*RAG is disabled*"
+            
+            # Show RAG results
+            yield "🔄 Starting generation...", "", rag_status, rag_preview
+            
             if backend == "vLLM (Streaming)":
                 client = MODEL_CONFIG["vllm"]["client"]
                 model_id = MODEL_CONFIG["vllm"]["model_id"]
                 if not client:
-                    yield "⚠️ Please initialize vLLM first", ""
+                    yield "⚠️ Please initialize vLLM first", "", rag_status, rag_preview
                     return
                 for output in generate_test_cases_for_gradio_stream(
-                    global_data, client, model_id, feature_choice, tp_choice, requirement
+                    global_data, client, model_id, feature_choice, tp_choice, requirement,
+                    use_rag=False,  # Already retrieved above
+                    rag_examples_text=rag_examples_text if use_rag else None
                 ):
-                    yield output
+                    yield output[0], output[1], rag_status, rag_preview
             else:
                 llm = MODEL_CONFIG["ollama"]["llm"]
                 if not llm:
-                    yield "⚠️ Please initialize Ollama first", ""
+                    yield "⚠️ Please initialize Ollama first", "", rag_status, rag_preview
                     return
-                result = generate_test_cases_for_gradio(global_data, llm, feature_choice, tp_choice, requirement)
-                yield result
+                result = generate_test_cases_for_gradio(
+                    global_data, llm, feature_choice, tp_choice, requirement,
+                    use_rag=use_rag, rag_top_k=int(rag_topk), jsonl_path=jsonl_path
+                )
+                yield result[0], result[1], rag_status, rag_preview
 
         gen_tc_btn.click(
             fn=generate_test_cases_handler,
-            inputs=[model_backend, feature_dropdown2, test_point_dropdown, test_case_requirement],
-            outputs=[test_case_output, test_case_thinking]
+            inputs=[model_backend, feature_dropdown2, test_point_dropdown, test_case_requirement,
+                   tc_use_rag, tc_rag_topk, tc_jsonl_path],
+            outputs=[test_case_output, test_case_thinking, tc_rag_status, tc_rag_preview]
         )
 
         regen_tc_btn.click(
             fn=generate_test_cases_handler,
-            inputs=[model_backend, feature_dropdown2, test_point_dropdown, test_case_requirement],
-            outputs=[test_case_output, test_case_thinking]
+            inputs=[model_backend, feature_dropdown2, test_point_dropdown, test_case_requirement,
+                   tc_use_rag, tc_rag_topk, tc_jsonl_path],
+            outputs=[test_case_output, test_case_thinking, tc_rag_status, tc_rag_preview]
         )
 
         # UI Automation Test Case Generation Handlers
@@ -1767,5 +1978,5 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7868,
-        share=False
+        share=True
     )

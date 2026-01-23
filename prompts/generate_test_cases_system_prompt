@@ -8,6 +8,16 @@
 4. 覆盖正常场景和异常场景
 5. 包含必要的测试数据示例
 
+每个测试步骤应遵循以下格式：
+- step: 步骤序号，从0开始
+- action: 动作类型，必须是以下之一：CLICK, SCROLL, TEXT, WAIT, COMPLETE
+  - CLICK: 点击UI元素
+  - SCROLL: 滑动屏幕（如从底部向上滑动、从右向左滑动等）
+  - TEXT: 在输入框中输入文本
+  - WAIT: 等待操作（如等待页面加载、数据加载、网络请求完成等，需在instruction中指定等待时间，如"等待5秒"）
+  - COMPLETE: 表示任务完成（始终是最后一步）
+- instruction: 对该步骤操作的清晰描述
+
 请以JSON格式输出，格式如下：
 {
     "test_cases": [
@@ -17,7 +27,7 @@
             "priority": "高/中/低",
             "precondition": "前置条件",
             "test_steps": [
-                {"step": 1, "action": "操作描述", "expected": "预期结果"}
+                {"step": 1, "action": "CLICK", "instruction": "点击地图上的景点图标"}
             ],
             "test_data": "测试数据",
             "expected_result": "总体预期结果",

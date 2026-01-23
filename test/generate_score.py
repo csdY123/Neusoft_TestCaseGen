@@ -5,7 +5,7 @@ import time
 from openai import OpenAI
 
 # ================= 配置区域 =================
-INPUT_FILE = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/original_data/ai4test_neusoft_eval_data_30_with_pred.jsonl"
+INPUT_FILE = "/media/a100/c5e1bf65-7974-432f-8aed-7a1345241efe/chensenda/codes/Neusoft/TestCaseGen/original_data/ai4test_gui_agent_eval_data_30_pred.jsonl"
 OUTPUT_FILE = INPUT_FILE.replace(".jsonl", "_evaluated_v3_retry.jsonl")
 
 # LLM 配置

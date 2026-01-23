@@ -384,9 +384,18 @@ def retrieve_knowledge(
     query: str,
     top_k: int = 7,
     use_reranker: bool = False,
-    index_directory: str = "faiss_index"
+    index_directory: str = "faiss_index",
+    filter_by_doc_path: str = None
 ) -> List[str]:
-    """Retrieve relevant knowledge fragments for a query"""
+    """Retrieve relevant knowledge fragments for a query
+    
+    Args:
+        query: Search query text
+        top_k: Number of results to return
+        use_reranker: Whether to use reranker
+        index_directory: FAISS index directory
+        filter_by_doc_path: If provided, only return results from this document path
+    """
     
     vectorstore = load_vectorstore(index_directory)
     if vectorstore is None:
@@ -394,7 +403,58 @@ def retrieve_knowledge(
     
     reranker = get_reranker() if use_reranker else None
     
-    results = hybrid_search(query, vectorstore, top_k=top_k, reranker=reranker)
+    # If filtering by document, retrieve more results first, then filter
+    search_k = top_k * 3 if filter_by_doc_path else top_k
+    
+    results = hybrid_search(query, vectorstore, top_k=search_k, reranker=reranker)
+    
+    # Filter by document path if specified
+    if filter_by_doc_path:
+        filtered_results = []
+        # Normalize the filter path for comparison
+        filter_path_norm = os.path.normpath(os.path.abspath(filter_by_doc_path))
+        filter_name = os.path.basename(filter_by_doc_path)
+        logger.info(f"Filtering by document: {filter_name} ({filter_path_norm})")
+        
+        # Debug: log first few results' metadata
+        for i, (doc, score) in enumerate(results[:3]):
+            meta = doc.metadata if hasattr(doc, 'metadata') else {}
+            logger.info(f"Doc {i} metadata keys: {list(meta.keys())}, source_path: {meta.get('source_path', 'NOT FOUND')}")
+        
+        for doc, score in results:
+            # Check metadata for source_path or source_name
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            source_path = metadata.get("source_path", "")
+            source_name = metadata.get("source_name", "")
+            
+            # Try multiple matching strategies
+            matched = False
+            if source_path:
+                # Normalize and compare absolute paths
+                try:
+                    source_path_norm = os.path.normpath(os.path.abspath(source_path))
+                    if source_path_norm == filter_path_norm:
+                        matched = True
+                    # Also try string contains for relative paths
+                    elif filter_by_doc_path in source_path or source_path in filter_by_doc_path:
+                        matched = True
+                except Exception:
+                    # Fallback to string comparison
+                    if filter_by_doc_path in source_path or source_path in filter_by_doc_path:
+                        matched = True
+            
+            if not matched and source_name:
+                # Match by filename
+                if source_name == filter_name or os.path.basename(source_path) == filter_name:
+                    matched = True
+            
+            if matched:
+                filtered_results.append((doc, score))
+                if len(filtered_results) >= top_k:
+                    break
+        
+        results = filtered_results
+    
     return [doc.page_content for doc, _ in results]
 
 
@@ -934,6 +994,11 @@ def build_index_from_docx_with_mode(
         logger.error("No valid chunks after preprocessing")
         return False
     
+    # Add document path to metadata for filtering
+    for chunk in processed:
+        chunk["source_path"] = docx_path
+        chunk["source_name"] = os.path.basename(docx_path)
+    
     if progress_callback:
         progress_callback(f"Building index with {len(processed)} chunks...")
     
@@ -1151,8 +1216,14 @@ def retrieve_jsonl_examples(
     return examples
 
 
-def format_jsonl_examples_for_prompt(examples: List[Dict[str, Any]]) -> str:
-    """Format retrieved JSONL examples as few-shot learning examples for prompt"""
+def format_jsonl_examples_for_prompt(examples: List[Dict[str, Any]], example_type: str = "auto") -> str:
+    """Format retrieved JSONL examples as few-shot learning examples for prompt
+    
+    Args:
+        examples: List of example dictionaries
+        example_type: "ui_automation" for UI steps, "traditional" for traditional test cases, 
+                     "auto" to auto-detect based on content
+    """
     if not examples:
         return ""
     
@@ -1163,12 +1234,45 @@ def format_jsonl_examples_for_prompt(examples: List[Dict[str, Any]]) -> str:
         prd_info = example.get("prd_info", {})
         steps = example.get("steps", [])
         
+        # Auto-detect example type based on content
+        detected_type = example_type
+        if example_type == "auto":
+            # Check if steps contain UI automation actions (CLICK, SCROLL, TEXT, etc.)
+            if steps and isinstance(steps, list) and len(steps) > 0:
+                first_step = steps[0] if isinstance(steps[0], dict) else {}
+                if first_step.get("action") in ["CLICK", "SCROLL", "TEXT", "COMPLETE", "WAIT"]:
+                    detected_type = "ui_automation"
+                else:
+                    detected_type = "traditional"
+            else:
+                detected_type = "traditional"
+        
         formatted += f"### Example {i}:\n"
         formatted += f"- **Test Case Name**: {prd_info.get('test_case_name', 'N/A')}\n"
         formatted += f"- **Feature**: {prd_info.get('feature', 'N/A')}\n"
         formatted += f"- **Test Point**: {prd_info.get('test_point', 'N/A')}\n"
-        formatted += f"- **PRD Document**: {prd_info.get('prd_document', 'N/A')}\n"
-        formatted += f"- **Steps**:\n```json\n{json.dumps(steps, ensure_ascii=False, indent=2)}\n```\n\n"
+        
+        if detected_type == "ui_automation":
+            # UI Automation format with action steps
+            formatted += f"- **PRD Document**: {prd_info.get('prd_document', 'N/A')}\n"
+            formatted += f"- **UI Automation Steps**:\n```json\n{json.dumps(steps, ensure_ascii=False, indent=2)}\n```\n\n"
+        else:
+            # Traditional test case format
+            if prd_info.get('precondition'):
+                formatted += f"- **Precondition**: {prd_info.get('precondition', 'N/A')}\n"
+            if prd_info.get('expected_result'):
+                formatted += f"- **Expected Result**: {prd_info.get('expected_result', 'N/A')}\n"
+            
+            # Format steps as numbered list if available
+            if steps and isinstance(steps, list):
+                formatted += "- **Test Steps**:\n"
+                for j, step in enumerate(steps, 1):
+                    if isinstance(step, dict):
+                        step_desc = step.get("description", step.get("step", str(step)))
+                        formatted += f"  {j}. {step_desc}\n"
+                    else:
+                        formatted += f"  {j}. {step}\n"
+            formatted += "\n"
     
     return formatted
 
